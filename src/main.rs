@@ -1,9 +1,15 @@
 #![no_std]
 #![no_main]
 #![feature(asm)]
+#![feature(naked_functions)]
+#![feature(asm_sym)]
 
 use core::panic::PanicInfo;
 use stivale_boot::v2::{StivaleFramebufferHeaderTag, StivaleHeader, StivaleStruct};
+
+pub mod arch;
+pub mod serial;
+pub mod video;
 
 static STACK: [u8; 8192] = [0; 8192];
 static FRAMEBUFFER_HEADER_TAG: StivaleFramebufferHeaderTag = StivaleFramebufferHeaderTag::new();
@@ -12,6 +18,7 @@ static FRAMEBUFFER_HEADER_TAG: StivaleFramebufferHeaderTag = StivaleFramebufferH
 #[no_mangle]
 #[used]
 static STIVALE_HEADER: StivaleHeader = StivaleHeader::new()
+    .flags(30)
     .stack(&STACK[8191] as *const u8)
     .tags((&FRAMEBUFFER_HEADER_TAG as *const StivaleFramebufferHeaderTag) as *const ());
 
@@ -20,13 +27,21 @@ extern "C" fn _start(_tags: usize) -> ! {
     let tags;
     unsafe { tags = &*(_tags as *const StivaleStruct) }
 
-    let framebuffer_tag = tags.framebuffer().unwrap();
+    serial::init();
+    serial::print("Hello, world?\n");
 
-    let fb = framebuffer_tag.framebuffer_addr as *mut u32;
-    for i in 0..100 {
-        unsafe {
-            *fb.offset(i) = 0xff6677;
-        }
+    unsafe {
+        arch::x86_64::gdt::init();
+        arch::x86_64::idt::init();
+    }
+
+    let framebuffer_tag = tags.framebuffer().unwrap();
+    let mut video = video::Video::new(framebuffer_tag);
+
+    video.print("Hello, world, from Rust!");
+
+    unsafe {
+        asm!("int 0x3");
     }
 
     loop {
@@ -38,5 +53,6 @@ extern "C" fn _start(_tags: usize) -> ! {
 
 #[panic_handler]
 fn panic_handler(_info: &PanicInfo) -> ! {
+    serial::print("at panic handler\n");
     loop {}
 }

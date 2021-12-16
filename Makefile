@@ -6,17 +6,21 @@ all: $(ISO_IMAGE)
 
 .PHONY: run
 run: $(ISO_IMAGE)
-	qemu-system-x86_64.exe -M q35 -m 2G -cdrom $(ISO_IMAGE)
+	qemu-system-x86_64.exe -M q35 -m 2G -serial file:CON -cdrom $(ISO_IMAGE)
+
+.PHONY: test
+test: $(ISO_IMAGE)
+	qemu-system-x86_64.exe -M q35 -m 2G -d int -M smm=off -serial file:CON -cdrom $(ISO_IMAGE)
 
 limine:
 	git clone https://github.com/limine-bootloader/limine.git --branch=v2.0-branch-binary --depth=1
 	make -C limine
 
 .PHONY: kernel
-$(GRIFFIN):
+griffin:
 	cargo build
 
-$(ISO_IMAGE): limine $(GRIFFIN)
+$(ISO_IMAGE): limine griffin
 	rm -rf iso_root
 	mkdir -p iso_root
 	cp $(GRIFFIN) \

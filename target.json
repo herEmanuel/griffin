@@ -7,17 +7,14 @@
     "target-c-int-width": "32",
     "os": "none",
     "executables": true,
-    "linker-flavor": "gcc",
-    "linker": "gcc",
+    "linker-flavor": "ld.lld",
+    "linker": "lld",
     "panic-strategy": "abort",
     "disable-redzone": true,
     "features": "-mmx,-sse,+soft-float",
     "pre-link-args": {
-        "gcc": [
-            "-Wl,--script=linker.ld",
-            "-Wl,--nmagic",
-            "-nostartfiles",
-            "-Wl,--no-dynamic-linker"
+        "ld.lld": [
+            "--script=linker.ld"
         ]
     }
 }
