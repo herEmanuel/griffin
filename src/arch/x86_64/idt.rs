@@ -96,11 +96,21 @@ pub unsafe fn register_isr(vector: usize, addr: u64, ist: u8, gate_type: u8) {
 
 pub unsafe fn init() {
     register_isr(3, int3 as u64, 0, 0x8E);
+    register_isr(0xE, page_fault as u64, 0, 0x8E);
 
     IDT_DESCRIPTOR.offset = &IDT as *const IdtGate as u64;
     asm!("lidt [{}]", in(reg) &IDT_DESCRIPTOR);
 }
 
 isr!(int3, {
-    serial::print("Breakpoint yeeee\n");
+    serial::print!("Breakpoint yeeee\n");
+});
+
+isr!(page_fault, {
+    serial::print!("PAGE FAULT\n");
+    unsafe {
+        loop {
+            asm!("hlt");
+        }
+    }
 });

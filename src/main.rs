@@ -3,12 +3,23 @@
 #![feature(asm)]
 #![feature(naked_functions)]
 #![feature(asm_sym)]
+#![feature(default_alloc_error_handler)]
+#![feature(panic_info_message)]
 
+extern crate alloc;
+
+use arch::x86_64::mm::pmm::PAGE_ALLOCATOR;
 use core::panic::PanicInfo;
-use stivale_boot::v2::{StivaleFramebufferHeaderTag, StivaleHeader, StivaleStruct};
+use mm::slab;
+use stivale_boot::v2::{
+    StivaleFramebufferHeaderTag, StivaleHeader, StivaleMemoryMapEntry, StivaleStruct,
+};
 
 pub mod arch;
+pub mod mm;
 pub mod serial;
+pub mod spinlock;
+pub mod utils;
 pub mod video;
 
 static STACK: [u8; 8192] = [0; 8192];
@@ -27,18 +38,39 @@ extern "C" fn _start(_tags: usize) -> ! {
     let tags;
     unsafe { tags = &*(_tags as *const StivaleStruct) }
 
-    serial::init();
-    serial::print("Hello, world?\n");
+    serial::SerialWriter::init();
+    // serial::print!("Hello, world?\n");
+
+    let framebuffer_tag = tags.framebuffer().unwrap();
+    let mmap_tag = tags.memory_map().unwrap();
+
+    let mut video = video::Video::new(framebuffer_tag);
+
+    video.print("Hello, world, from Rust!");
 
     unsafe {
         arch::x86_64::gdt::init();
         arch::x86_64::idt::init();
+
+        arch::x86_64::mm::pmm::init(
+            &mmap_tag.entry_array as *const StivaleMemoryMapEntry,
+            mmap_tag.entries_len,
+        );
+        serial::print!("pmm done yey\n");
+        slab::init();
     }
 
-    let framebuffer_tag = tags.framebuffer().unwrap();
-    let mut video = video::Video::new(framebuffer_tag);
+    serial::print!("slab allocator running\n");
 
-    video.print("Hello, world, from Rust!");
+    serial::print!("----------------------------------------------\n");
+
+    let mut msg = alloc::string::String::from("hellooooppl");
+    msg.push_str("ayup");
+
+    msg.push_str("huh");
+    serial::print!("{}\n", msg);
+
+    serial::print!("yes initialized");
 
     unsafe {
         asm!("int 0x3");
@@ -53,6 +85,6 @@ extern "C" fn _start(_tags: usize) -> ! {
 
 #[panic_handler]
 fn panic_handler(_info: &PanicInfo) -> ! {
-    serial::print("at panic handler\n");
+    serial::print!("PANIC: {}\n", _info.message().unwrap());
     loop {}
 }
