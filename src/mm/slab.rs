@@ -6,7 +6,8 @@
 
 use crate::arch::x86_64::mm::pmm;
 use crate::serial;
-use crate::utils::{bitmap, math};
+use crate::spinlock::Spinlock;
+use crate::utils::{addr, bitmap, math};
 use core::alloc::GlobalAlloc;
 use core::mem::size_of;
 use core::ptr::null_mut;
@@ -27,14 +28,12 @@ struct Cache<'a> {
 
 impl<'a> Cache<'a> {
     unsafe fn new(name: &str, obj_size: usize) -> *mut Cache {
-        serial::print!("--------------------------\n");
-        let chache_ptr = pmm::PAGE_ALLOCATOR
+        let mut chache_ptr = pmm::PAGE_ALLOCATOR
             .calloc(1)
             .expect("Could not allocate pages for the cache")
             as *mut Cache;
 
-        serial::print!("cache addr: {:p}\n", &*chache_ptr);
-        serial::print!("--------------------------\n");
+        chache_ptr = addr::higher_half(chache_ptr);
 
         let cache = &mut *chache_ptr;
         cache.name = name;
@@ -58,8 +57,8 @@ impl<'a> Cache<'a> {
         }
 
         //TODO: limit the number of new slabs?
+        //TODO: lock this?
         if curr_slab.free_objs == 0 {
-            serial::print!("WTFkasjsdkaj\n");
             let new_slab = Slab::new(self);
             (*new_slab).next = self.slabs;
             self.slabs = new_slab;
@@ -99,20 +98,20 @@ struct Slab {
     free_objs: usize,
     object_size: usize,
     data: *mut u8,
-    bitmap: bitmap::Bitmap<{ OBJS_PER_SLAB / 8 }>,
+    bitmap: Spinlock<bitmap::Bitmap<{ OBJS_PER_SLAB / 8 }>>,
     next: *mut Slab,
     previous: *mut Slab,
 }
 
 impl Slab {
     unsafe fn new(parent: &mut Cache) -> *mut Slab {
-        serial::print!("--------------------------\n");
-        let slab_ptr = pmm::PAGE_ALLOCATOR
+        let mut slab_ptr = pmm::PAGE_ALLOCATOR
             .calloc(parent.pages_per_slab)
             .expect("Could not allocate pages for the new slab")
             as *mut Slab;
-        serial::print!("slab addr: {:p}\n", &*slab_ptr);
-        serial::print!("--------------------------\n");
+
+        slab_ptr = addr::higher_half(slab_ptr);
+
         let slab = &mut *slab_ptr;
 
         slab.free_objs = OBJS_PER_SLAB;
@@ -133,27 +132,34 @@ impl Slab {
             return null_mut();
         }
 
+        let bitmap = self.bitmap.lock();
+
         for i in 0..OBJS_PER_SLAB {
-            if self.bitmap.bit_at(i) == 0 {
-                self.bitmap.set_bit(i);
+            if bitmap.bit_at(i) == 0 {
+                bitmap.set_bit(i);
                 self.free_objs -= 1;
                 serial::print!(
                     "addr go brr: {:p}\n",
                     &*self.data.offset((i * self.object_size) as isize)
                 );
+
+                self.bitmap.unlock();
                 return self.data.offset((i * self.object_size) as isize);
             }
         }
 
+        self.bitmap.unlock();
         null_mut() // should never get here
     }
 
     unsafe fn dealloc(&mut self, ptr: *mut u8) {
         serial::print!("at dealloc\n");
         let bit = (ptr as usize - self.data as usize) / self.object_size;
+        let bitmap = self.bitmap.lock();
 
         self.free_objs += 1;
-        self.bitmap.clear_bit(bit);
+        bitmap.clear_bit(bit);
+        self.bitmap.unlock();
     }
 }
 
@@ -163,14 +169,12 @@ struct SlabAllocator<'a> {
 
 impl<'a> SlabAllocator<'a> {
     unsafe fn add_cache(&mut self, name: &'a str, obj_size: usize) {
-        serial::print!("at add cache\n");
         if self.caches.is_null() {
             self.caches = Cache::new(name, obj_size);
             return;
         }
 
         let new_cache = Cache::new(name, obj_size);
-        serial::print!("after cache new\n");
         (*new_cache).next = self.caches;
         self.caches = new_cache;
     }
@@ -179,7 +183,6 @@ impl<'a> SlabAllocator<'a> {
         let mut curr_cache = self.caches;
 
         while (*curr_cache).object_size < size {
-            serial::print!("a\n");
             curr_cache = (*curr_cache).next;
         }
 

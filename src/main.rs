@@ -8,7 +8,7 @@
 
 extern crate alloc;
 
-use arch::x86_64::mm::pmm::PAGE_ALLOCATOR;
+use arch::x86_64::cpu;
 use core::panic::PanicInfo;
 use mm::slab;
 use stivale_boot::v2::{
@@ -39,14 +39,14 @@ extern "C" fn _start(_tags: usize) -> ! {
     unsafe { tags = &*(_tags as *const StivaleStruct) }
 
     serial::SerialWriter::init();
-    // serial::print!("Hello, world?\n");
 
     let framebuffer_tag = tags.framebuffer().unwrap();
     let mmap_tag = tags.memory_map().unwrap();
 
     let mut video = video::Video::new(framebuffer_tag);
 
-    video.print("Hello, world, from Rust!");
+    video.print("Hello, world, from Rust!\n");
+    video.print("Is everything fine?");
 
     unsafe {
         arch::x86_64::gdt::init();
@@ -62,29 +62,21 @@ extern "C" fn _start(_tags: usize) -> ! {
 
     serial::print!("slab allocator running\n");
 
-    serial::print!("----------------------------------------------\n");
-
     let mut msg = alloc::string::String::from("hellooooppl");
     msg.push_str("ayup");
 
     msg.push_str("huh");
     serial::print!("{}\n", msg);
 
-    serial::print!("yes initialized");
-
     unsafe {
-        asm!("int 0x3");
-    }
-
-    loop {
-        unsafe {
-            asm!("hlt");
-        }
+        cpu::halt();
     }
 }
 
 #[panic_handler]
 fn panic_handler(_info: &PanicInfo) -> ! {
     serial::print!("PANIC: {}\n", _info.message().unwrap());
-    loop {}
+    unsafe {
+        cpu::halt();
+    }
 }

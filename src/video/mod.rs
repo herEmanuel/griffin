@@ -1,6 +1,6 @@
 use stivale_boot::v2::StivaleFramebufferTag;
 
-mod font;
+mod fonts;
 
 pub struct Video {
     cursor_x: usize,
@@ -9,6 +9,7 @@ pub struct Video {
     height: u16,
     width: u16,
     pitch: u16,
+    font: fonts::Font,
 }
 
 impl Video {
@@ -20,24 +21,25 @@ impl Video {
             height: fb_tag.framebuffer_height,
             width: fb_tag.framebuffer_width,
             pitch: fb_tag.framebuffer_pitch,
+            font: fonts::Font::new(),
         }
     }
 
     pub fn putc(&mut self, character: char, color: u32) {
         match character {
             '\n' => {
-                self.cursor_y += font::CHAR_HEIGHT as usize + 2;
-                self.cursor_x = 0;
+                self.cursor_y += self.font.height as usize + 2;
+                self.cursor_x = 10;
                 return;
             }
 
             _ => {}
         }
 
-        let index = character as u32 * font::CHAR_HEIGHT;
-        for col in 0..font::CHAR_HEIGHT {
-            for row in 0..font::CHAR_WIDTH {
-                if (font::FONT[(index + col) as usize] >> (7 - row)) & 1 == 1 {
+        let index = character as u32 * self.font.height;
+        for col in 0..self.font.height {
+            for row in 0..self.font.width {
+                if (self.font.bitmap[(index + col) as usize] >> (7 - row)) & 1 == 1 {
                     let offset = self.cursor_x
                         + row as usize
                         + (self.cursor_y + col as usize) * self.pitch as usize / 4;
@@ -49,10 +51,10 @@ impl Video {
             }
         }
 
-        self.cursor_x += font::CHAR_WIDTH as usize + 2;
+        self.cursor_x += self.font.width as usize + 2;
         if self.cursor_x >= self.width as usize {
-            self.cursor_x = 0;
-            self.cursor_y += font::CHAR_HEIGHT as usize + 2;
+            self.cursor_x = 10;
+            self.cursor_y += self.font.height as usize + 2;
         }
     }
 

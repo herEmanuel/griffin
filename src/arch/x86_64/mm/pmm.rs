@@ -60,10 +60,20 @@ impl Pmm {
             None
         }
     }
+
+    pub unsafe fn free(&mut self, ptr: *mut u8, pages_amnt: usize) {
+        let page = ptr as u64 / PAGE_SIZE;
+        let bitmap = self.bitmap.lock();
+
+        for i in page..page + pages_amnt as u64 {
+            *bitmap.offset((i / 8) as isize) |= 1 << (7 - i % 8);
+        }
+
+        self.bitmap.unlock();
+    }
 }
 
 pub unsafe fn init(entries: *const StivaleMemoryMapEntry, entries_num: u64) {
-    serial::print!("init\n");
     let mut biggest = 0;
 
     for i in 0..entries_num {
