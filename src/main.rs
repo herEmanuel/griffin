@@ -62,6 +62,8 @@ extern "C" fn _start(_tags: usize) -> ! {
 
     serial::print!("slab allocator running\n");
 
+    arch::x86_64::pci::enumerate_devices();
+
     let mut msg = alloc::string::String::from("hellooooppl");
     msg.push_str("ayup");
 
