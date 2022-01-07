@@ -15,7 +15,7 @@ use core::ptr::null_mut;
 const OBJS_PER_SLAB: usize = 256;
 
 #[global_allocator]
-static mut SLAB_ALLOCATOR: SlabAllocator = SlabAllocator { caches: null_mut() };
+pub static mut SLAB_ALLOCATOR: SlabAllocator = SlabAllocator { caches: null_mut() };
 
 struct Cache<'a> {
     name: &'a str,
@@ -43,6 +43,7 @@ impl<'a> Cache<'a> {
             pmm::PAGE_SIZE as usize,
         );
         cache.slab_count = 0;
+        cache.slabs = null_mut(); // last slab guaranted to be null
         cache.slabs = Slab::new(cache);
         cache.next = null_mut();
 
@@ -50,6 +51,7 @@ impl<'a> Cache<'a> {
     }
 
     unsafe fn alloc_obj(&mut self) -> *mut u8 {
+        SLAB_ALLOCATOR.dump();
         let mut curr_slab = &mut *self.slabs;
 
         while curr_slab.free_objs == 0 {
@@ -91,6 +93,7 @@ impl<'a> Cache<'a> {
         }
 
         curr_slab.dealloc(ptr);
+        SLAB_ALLOCATOR.dump();
     }
 }
 
@@ -163,7 +166,7 @@ impl Slab {
     }
 }
 
-struct SlabAllocator<'a> {
+pub struct SlabAllocator<'a> {
     caches: *mut Cache<'a>,
 }
 
@@ -182,15 +185,31 @@ impl<'a> SlabAllocator<'a> {
     unsafe fn cache_for(&self, size: usize) -> Option<*mut Cache<'a>> {
         let mut curr_cache = self.caches;
 
-        while (*curr_cache).object_size < size {
+        while !curr_cache.is_null() && (*curr_cache).object_size < size {
+            if size == 11 {
+                serial::print!("cache size: {}\n", (*curr_cache).object_size);
+            }
             curr_cache = (*curr_cache).next;
         }
 
-        if (*curr_cache).object_size < size {
+        if curr_cache.is_null() || (*curr_cache).object_size < size {
             return None;
         }
 
         Some(curr_cache)
+    }
+
+    pub unsafe fn dump(&self) {
+        let mut curr_cache = self.caches;
+
+        while !curr_cache.is_null() {
+            serial::print!(
+                "[SLAB DUMP] Found a cache, object size of {}, slab count of {}\n",
+                (*curr_cache).object_size,
+                (*curr_cache).slab_count
+            );
+            curr_cache = (*curr_cache).next;
+        }
     }
 }
 

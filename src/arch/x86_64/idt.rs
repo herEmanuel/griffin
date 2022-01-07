@@ -108,9 +108,7 @@ isr!(int3, {
 
 isr!(page_fault, {
     serial::print!("PAGE FAULT\n");
-    unsafe {
-        loop {
-            asm!("hlt");
-        }
+    loop {
+        asm!("hlt");
     }
 });

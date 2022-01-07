@@ -5,6 +5,7 @@
 #![feature(asm_sym)]
 #![feature(default_alloc_error_handler)]
 #![feature(panic_info_message)]
+#![feature(core_intrinsics)]
 
 extern crate alloc;
 
@@ -16,6 +17,7 @@ use stivale_boot::v2::{
 };
 
 pub mod arch;
+pub mod drivers;
 pub mod mm;
 pub mod serial;
 pub mod spinlock;
@@ -48,6 +50,8 @@ extern "C" fn _start(_tags: usize) -> ! {
     video.print("Hello, world, from Rust!\n");
     video.print("Is everything fine?");
 
+    // video.print("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Suspendisse dictum ligula erat, sit amet lobortis lacus facilisis id. Cras at congue enim. Aenean arcu arcu, aliquam vitae vehicula id, cursus in diam. Quisque et elit euismod, pulvinar nunc eget, venenatis felis. Etiam leo lorem, egestas ut luctus sit amet, posuere quis velit. Quisque ac felis suscipit, facilisis libero et, rhoncus felis. Curabitur id congue leo. Donec lobortis, arcu ac hendrerit commodo, velit ante tempus libero, sed pellentesque sem turpis sed tortor. Vestibulum feugiat egestas mauris vulputate ultrices. ");
+
     unsafe {
         arch::x86_64::gdt::init();
         arch::x86_64::idt::init();
@@ -63,7 +67,9 @@ extern "C" fn _start(_tags: usize) -> ! {
     serial::print!("slab allocator running\n");
 
     arch::x86_64::pci::enumerate_devices();
-
+    unsafe {
+        slab::SLAB_ALLOCATOR.dump();
+    }
     let mut msg = alloc::string::String::from("hellooooppl");
     msg.push_str("ayup");
 

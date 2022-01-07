@@ -51,8 +51,9 @@ impl Video {
             }
         }
 
-        self.cursor_x += self.font.width as usize + 2;
-        if self.cursor_x >= self.width as usize {
+        let char_width = self.font.width as usize + 2;
+        self.cursor_x += char_width;
+        if self.cursor_x + char_width >= self.width as usize {
             self.cursor_x = 10;
             self.cursor_y += self.font.height as usize + 2;
         }
