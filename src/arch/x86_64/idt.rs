@@ -95,7 +95,8 @@ pub unsafe fn register_isr(vector: usize, addr: u64, ist: u8, gate_type: u8) {
 }
 
 pub unsafe fn init() {
-    register_isr(3, int3 as u64, 0, 0x8E);
+    register_isr(0x3, int3 as u64, 0, 0x8E);
+    register_isr(0x6, invalid_opcode as u64, 0, 0x8E);
     register_isr(0xE, page_fault as u64, 0, 0x8E);
 
     IDT_DESCRIPTOR.offset = &IDT as *const IdtGate as u64;
@@ -108,6 +109,13 @@ isr!(int3, {
 
 isr!(page_fault, {
     serial::print!("PAGE FAULT\n");
+    loop {
+        asm!("hlt");
+    }
+});
+
+isr!(invalid_opcode, {
+    serial::print!("INVALID OPCODE\n");
     loop {
         asm!("hlt");
     }

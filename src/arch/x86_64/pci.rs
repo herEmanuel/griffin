@@ -118,16 +118,12 @@ pub fn enumerate_devices() {
 
     unsafe {
         for dev in PCI_DEVICES.iter() {
-            // serial::print!("Found PCI device: {:?}\n", dev);
-
             if dev.class == 0x1 && dev.subclass == 0x6 && dev.prog_if == 0x1 {
                 // ahci controller
                 ahci::init(dev);
             }
         }
     }
-
-    serial::print!("yes?\n");
 }
 
 pub fn read(bus: u8, device: u8, function: u8, offset: u8) -> u32 {

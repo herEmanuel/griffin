@@ -20,6 +20,10 @@ test: $(ISO_IMAGE)
 		-device ide-hd,drive=disk,bus=ahci.0 \
 		-serial file:CON -monitor stdio -cdrom $(ISO_IMAGE)
 
+.PHONY: kvm
+kvm:
+	qemu-system-x86_64.exe -M q35 -m 2G -serial file:CON -cdrom $(ISO_IMAGE) -accel whpx
+
 limine:
 	git clone https://github.com/limine-bootloader/limine.git --branch=v2.0-branch-binary --depth=1
 	make -C limine

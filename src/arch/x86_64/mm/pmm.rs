@@ -23,19 +23,21 @@ impl Pmm {
         }
     }
 
-    pub unsafe fn alloc(&mut self, pages: usize) -> Option<*mut u8> {
+    pub fn alloc(&mut self, pages: usize) -> Option<*mut u8> {
         let bitmap = self.bitmap.lock();
         let mut count = 0;
 
         for i in 0..self.bitmap_size * 8 {
-            if *bitmap.offset((i / 8) as isize) & (1 << (7 - i % 8)) != 0 {
+            if unsafe { *bitmap.offset((i / 8) as isize) } & (1 << (7 - i % 8)) != 0 {
                 count += 1;
 
                 if count == pages {
                     let page = i - pages as u64 + 1;
 
                     for p in page..page + pages as u64 {
-                        *bitmap.offset((p / 8) as isize) &= !(1 << (7 - p % 8));
+                        unsafe {
+                            *bitmap.offset((p / 8) as isize) &= !(1 << (7 - p % 8));
+                        }
                     }
 
                     self.bitmap.unlock();
@@ -52,21 +54,25 @@ impl Pmm {
         None
     }
 
-    pub unsafe fn calloc(&mut self, pages: usize) -> Option<*mut u8> {
+    pub fn calloc(&mut self, pages: usize) -> Option<*mut u8> {
         if let Some(mem) = self.alloc(pages) {
-            mem.write_bytes(0, pages * PAGE_SIZE as usize);
+            unsafe {
+                mem.write_bytes(0, pages * PAGE_SIZE as usize);
+            }
             Some(mem)
         } else {
             None
         }
     }
 
-    pub unsafe fn free(&mut self, ptr: *mut u8, pages_amnt: usize) {
+    pub fn free(&mut self, ptr: *mut u8, pages_amnt: usize) {
         let page = ptr as u64 / PAGE_SIZE;
         let bitmap = self.bitmap.lock();
 
         for i in page..page + pages_amnt as u64 {
-            *bitmap.offset((i / 8) as isize) |= 1 << (7 - i % 8);
+            unsafe {
+                *bitmap.offset((i / 8) as isize) |= 1 << (7 - i % 8);
+            }
         }
 
         self.bitmap.unlock();
@@ -146,4 +152,8 @@ pub unsafe fn init(entries: *const StivaleMemoryMapEntry, entries_num: u64) {
         PAGE_ALLOCATOR.bitmap.unlock();
     }
     serial::print!("initialized the bitmap\n");
+}
+
+pub fn get() -> &'static mut Pmm {
+    unsafe { &mut PAGE_ALLOCATOR }
 }

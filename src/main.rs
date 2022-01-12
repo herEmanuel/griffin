@@ -11,7 +11,7 @@ extern crate alloc;
 
 use arch::x86_64::cpu;
 use core::panic::PanicInfo;
-use mm::slab;
+use mm::{slab, vmm};
 use stivale_boot::v2::{
     StivaleFramebufferHeaderTag, StivaleHeader, StivaleMemoryMapEntry, StivaleStruct,
 };
@@ -61,6 +61,7 @@ extern "C" fn _start(_tags: usize) -> ! {
             mmap_tag.entries_len,
         );
         serial::print!("pmm done yey\n");
+        vmm::init();
         slab::init();
     }
 
