@@ -1,4 +1,4 @@
-use crate::arch::x86_64::mm::pmm;
+use crate::arch::x86_64::mm::pmm::{self, PhysAddr};
 use alloc::vec::Vec;
 
 bitflags::bitflags! {
@@ -15,6 +15,36 @@ bitflags::bitflags! {
 static mut VIRTUAL_MEMORY_MANAGER: VirtualMemManager = VirtualMemManager::new();
 pub const KERNEL_BASE: u64 = 0xffffffff80000000;
 
+#[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
+pub struct VirtAddr(u64);
+
+impl VirtAddr {
+    pub fn new(addr: u64) -> Self {
+        VirtAddr(addr)
+    }
+
+    pub fn pml4(self) -> u16 {
+        ((self.0 >> 39) & 0x1ff) as u16
+    }
+
+    pub fn pdp(self) -> u16 {
+        ((self.0 >> 30) & 0x1ff) as u16
+    }
+
+    pub fn pd(self) -> u16 {
+        ((self.0 >> 21) & 0x1ff) as u16
+    }
+
+    pub fn pt(self) -> u16 {
+        ((self.0 >> 12) & 0x1ff) as u16
+    }
+
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
 pub struct MemRange {
     base: u64,
     length: usize,
@@ -22,80 +52,87 @@ pub struct MemRange {
 }
 
 pub struct VirtualMemManager {
-    pagemap: u64,
+    pagemap: PhysAddr,
     ranges: Vec<MemRange>,
 }
 
 impl VirtualMemManager {
     const fn new() -> Self {
         VirtualMemManager {
-            pagemap: 0,
+            pagemap: PhysAddr::new(0),
             ranges: alloc::vec![],
         }
     }
 
     pub fn switch_pagemap(&self) {
         unsafe {
-            asm!("mov cr3, {}", in(reg) self.pagemap);
+            asm!("mov cr3, {}", in(reg) self.pagemap.as_u64());
         }
     }
 
-    pub fn invlpg(&self, virtual_addr: u64) {
+    pub fn invlpg(&self, virtual_addr: VirtAddr) {
         unsafe {
-            asm!("invlpg [{}]", in(reg) virtual_addr);
+            asm!("invlpg [{}]", in(reg) virtual_addr.as_u64());
         }
     }
 
-    fn get_next_level(&self, curr: u64, index: isize) -> u64 {
-        let level = (curr + pmm::PHYS_BASE) as *mut u64;
+    fn get_next_level(&self, curr: PhysAddr, index: isize) -> PhysAddr {
+        let level: *mut u64 = curr.higher_half().as_mut_ptr();
 
         unsafe {
             if *level.offset(index) & 1 == 0 {
-                let entry = pmm::PAGE_ALLOCATOR
+                let entry = pmm::get()
                     .calloc(1)
                     .expect("Could not allocate a page needed for get_next_level")
-                    as u64;
+                    .as_u64();
 
                 let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USERMODE;
                 *level.offset(index) = entry | flags.bits();
 
-                return entry;
+                return PhysAddr::new(entry);
             }
 
-            *level.offset(index) & 0xfffffffffffff000
+            PhysAddr::new(*level.offset(index) & 0xfffffffffffff000)
         }
     }
 
-    pub fn map_page(&self, virtual_addr: u64, phys_addr: u64, flags: PageFlags, flush_prev: bool) {
+    pub fn map_page(
+        &self,
+        virtual_addr: VirtAddr,
+        phys_addr: PhysAddr,
+        flags: PageFlags,
+        flush_prev: bool,
+    ) {
         if flush_prev {
             self.invlpg(virtual_addr);
         }
 
-        let pml4e = (virtual_addr >> 39) & 0x1ff;
-        let pdpe = (virtual_addr >> 30) & 0x1ff;
-        let pde = (virtual_addr >> 21) & 0x1ff;
-        let pte = (virtual_addr >> 12) & 0x1ff;
+        let pml4e = virtual_addr.pml4();
+        let pdpe = virtual_addr.pdp();
+        let pde = virtual_addr.pd();
+        let pte = virtual_addr.pt();
 
         let pdp = self.get_next_level(self.pagemap, pml4e as isize);
         let pd = self.get_next_level(pdp, pdpe as isize);
-        let page_table = self.get_next_level(pd, pde as isize) as *mut u64;
+        let page_table: *mut u64 = self.get_next_level(pd, pde as isize).as_mut_ptr();
 
         unsafe {
-            *page_table.offset(pte as isize) = phys_addr | flags.bits();
+            *page_table.offset(pte as isize) = phys_addr.as_u64() | flags.bits();
         }
     }
 
-    pub fn get_phys_addr(&self, virtual_addr: u64) -> u64 {
-        let pml4e = (virtual_addr >> 39) & 0x1ff;
-        let pdpe = (virtual_addr >> 30) & 0x1ff;
-        let pde = (virtual_addr >> 21) & 0x1ff;
-        let pte = (virtual_addr >> 12) & 0x1ff;
+    pub fn get_phys_addr(&self, virtual_addr: VirtAddr) -> PhysAddr {
+        let pml4e = virtual_addr.pml4();
+        let pdpe = virtual_addr.pdp();
+        let pde = virtual_addr.pd();
+        let pte = virtual_addr.pt();
 
         let pdp = self.get_next_level(self.pagemap, pml4e as isize);
         let pd = self.get_next_level(pdp, pdpe as isize);
-        let page_table = self.get_next_level(pd, pde as isize) as *mut u64;
+        let page_table: *mut u64 = self.get_next_level(pd, pde as isize).as_mut_ptr();
 
-        unsafe { *page_table.offset(pte as isize) }
+        // TODO: remove the flags from the address
+        unsafe { PhysAddr::new(*page_table.offset(pte as isize)) }
     }
 }
 
@@ -104,7 +141,7 @@ pub fn init() {
 
     unsafe {
         asm!("mov {}, cr3", out(reg) pml4);
-        VIRTUAL_MEMORY_MANAGER.pagemap = pml4;
+        VIRTUAL_MEMORY_MANAGER.pagemap = PhysAddr::new(pml4);
     }
 }
 

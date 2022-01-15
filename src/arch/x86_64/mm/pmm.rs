@@ -10,6 +10,36 @@ pub const PHYS_BASE: u64 = 0xffff800000000000;
 
 pub static mut PAGE_ALLOCATOR: Pmm = Pmm::new();
 
+#[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
+pub struct PhysAddr(u64);
+
+impl PhysAddr {
+    pub const fn new(addr: u64) -> Self {
+        PhysAddr(addr)
+    }
+
+    pub fn higher_half(self) -> Self {
+        PhysAddr(self.0 | PHYS_BASE)
+    }
+
+    pub fn lower_half(self) -> Self {
+        PhysAddr(self.0 & !PHYS_BASE)
+    }
+
+    pub fn as_ptr<T>(self) -> *const T {
+        self.0 as *const T
+    }
+
+    pub fn as_mut_ptr<T>(self) -> *mut T {
+        self.0 as *mut T
+    }
+
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
 pub struct Pmm {
     bitmap: Spinlock<*mut u8>,
     bitmap_size: u64,
@@ -23,7 +53,7 @@ impl Pmm {
         }
     }
 
-    pub fn alloc(&mut self, pages: usize) -> Option<*mut u8> {
+    pub fn alloc(&mut self, pages: usize) -> Option<PhysAddr> {
         let bitmap = self.bitmap.lock();
         let mut count = 0;
 
@@ -41,7 +71,7 @@ impl Pmm {
                     }
 
                     self.bitmap.unlock();
-                    return Some((page * PAGE_SIZE) as *mut u8);
+                    return Some(PhysAddr::new(page * PAGE_SIZE));
                 }
 
                 continue;
@@ -54,10 +84,11 @@ impl Pmm {
         None
     }
 
-    pub fn calloc(&mut self, pages: usize) -> Option<*mut u8> {
+    pub fn calloc(&mut self, pages: usize) -> Option<PhysAddr> {
         if let Some(mem) = self.alloc(pages) {
             unsafe {
-                mem.write_bytes(0, pages * PAGE_SIZE as usize);
+                mem.as_mut_ptr::<u8>()
+                    .write_bytes(0, pages * PAGE_SIZE as usize);
             }
             Some(mem)
         } else {

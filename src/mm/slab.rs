@@ -7,7 +7,7 @@
 use crate::arch::x86_64::mm::pmm;
 use crate::serial;
 use crate::spinlock::Spinlock;
-use crate::utils::{addr, bitmap, math};
+use crate::utils::{bitmap, math};
 use core::alloc::GlobalAlloc;
 use core::mem::size_of;
 use core::ptr::null_mut;
@@ -28,12 +28,11 @@ struct Cache<'a> {
 
 impl<'a> Cache<'a> {
     unsafe fn new(name: &str, obj_size: usize) -> *mut Cache {
-        let mut chache_ptr = pmm::PAGE_ALLOCATOR
+        let mut chache_ptr: *mut Cache = pmm::get()
             .calloc(1)
             .expect("Could not allocate pages for the cache")
-            as *mut Cache;
-
-        chache_ptr = addr::higher_half(chache_ptr);
+            .higher_half()
+            .as_mut_ptr();
 
         let cache = &mut *chache_ptr;
         cache.name = name;
@@ -51,7 +50,6 @@ impl<'a> Cache<'a> {
     }
 
     unsafe fn alloc_obj(&mut self) -> *mut u8 {
-        SLAB_ALLOCATOR.dump();
         let mut curr_slab = &mut *self.slabs;
 
         while curr_slab.free_objs == 0 {
@@ -93,7 +91,6 @@ impl<'a> Cache<'a> {
         }
 
         curr_slab.dealloc(ptr);
-        SLAB_ALLOCATOR.dump();
     }
 }
 
@@ -108,12 +105,11 @@ struct Slab {
 
 impl Slab {
     unsafe fn new(parent: &mut Cache) -> *mut Slab {
-        let mut slab_ptr = pmm::PAGE_ALLOCATOR
+        let mut slab_ptr: *mut Slab = pmm::get()
             .calloc(parent.pages_per_slab)
             .expect("Could not allocate pages for the new slab")
-            as *mut Slab;
-
-        slab_ptr = addr::higher_half(slab_ptr);
+            .higher_half()
+            .as_mut_ptr();
 
         let slab = &mut *slab_ptr;
 

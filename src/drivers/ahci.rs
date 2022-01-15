@@ -1,9 +1,10 @@
 use core::intrinsics::size_of;
 
-use crate::arch::x86_64::{io::Mmio, mm::pmm, pci};
-use crate::mm::vmm::{self, PageFlags};
+use crate::arch::x86_64::mm::pmm::{self, PhysAddr};
+use crate::arch::x86_64::{io::Mmio, pci};
+use crate::mm::vmm::{self, PageFlags, VirtAddr};
 use crate::serial;
-use crate::utils::{addr, math::div_ceil};
+use crate::utils::math::div_ceil;
 use alloc::vec::Vec;
 
 const SATA_ATA: u32 = 0x101;
@@ -186,7 +187,7 @@ impl PortRegisters {
 
         let cmd_table = cmd_header.get_command_table();
 
-        let buffer_addr = buffer as u64 - pmm::PHYS_BASE;
+        let buffer_addr = buffer as u64 & !pmm::PHYS_BASE;
         cmd_table.prdt_entries[0].set_buffer(buffer_addr, sectors);
 
         let fis = unsafe { &mut *(cmd_table.cmd_fis.as_mut_ptr() as *mut FisRegH2D) };
@@ -218,16 +219,51 @@ impl PortRegisters {
     }
 }
 
+struct AhciDevice {
+    pub regs: &'static mut PortRegisters,
+}
+
+impl AhciDevice {
+    // we use the clb and fb provided by the firmware
+    unsafe fn new(regs: &'static mut PortRegisters) -> Self {
+        for i in 0..32 {
+            let cmd_header = regs.get_command_header(i);
+
+            let cmd_table_pages = div_ceil(size_of::<CommandTable>(), pmm::PAGE_SIZE as usize);
+            let cmd_table = pmm::get()
+                .calloc(cmd_table_pages)
+                .expect("Could not allocate the pages needed for the command list (AHCI)")
+                .as_u64();
+
+            for i in (0..cmd_table_pages * pmm::PAGE_SIZE as usize).step_by(pmm::PAGE_SIZE as usize)
+            {
+                vmm::get().map_page(
+                    VirtAddr::new(cmd_table + pmm::PHYS_BASE + i as u64),
+                    PhysAddr::new(cmd_table + i as u64),
+                    PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::UNCACHEABLE,
+                    true,
+                );
+            }
+
+            cmd_header.ctaddr_lower.set(cmd_table as u32);
+            cmd_header.ctaddr_upper.set((cmd_table >> 32) as u32);
+        }
+
+        let device = AhciDevice { regs };
+        device
+    }
+}
+
 pub fn init(hba: &pci::PciDevice) {
     let bar5 = hba.get_bar(5);
 
     hba.bus_master();
     hba.enable_mmio();
 
-    let hba_mem = unsafe { &mut *((bar5 + pmm::PHYS_BASE) as *mut ControllerRegisters) };
+    let hba_mem = unsafe { &mut *bar5.higher_half().as_mut_ptr::<ControllerRegisters>() };
 
     vmm::get().map_page(
-        bar5 + pmm::PHYS_BASE,
+        VirtAddr::new(bar5.higher_half().as_u64()),
         bar5,
         PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::UNCACHEABLE,
         true,
@@ -244,14 +280,9 @@ pub fn init(hba: &pci::PciDevice) {
                 unsafe {
                     let device = AhciDevice::new(port);
                     serial::print!("Initialized ahci driver\n");
-                    let mut mem = pmm::PAGE_ALLOCATOR.calloc(1).unwrap();
-                    mem = addr::higher_half(mem);
-                    let mut mem2 = pmm::PAGE_ALLOCATOR.calloc(1).unwrap();
-                    mem2 = addr::higher_half(mem2);
-                    mem.write_bytes(0xff, 4096);
-                    device.regs.send_command(1, 1, mem, true);
-                    device.regs.send_command(1, 1, mem2, false);
-                    serial::print!("ahci result: {}\n", *(mem2 as *mut u64));
+                    let mut mem: *mut u8 = pmm::get().calloc(1).unwrap().as_mut_ptr();
+                    device.regs.send_command(2, 1, mem, false);
+                    serial::print!("ahci access result: {:#x}\n", *(mem as *mut u64));
                     AHCI_DEVICES.push(device);
                 }
             }
@@ -259,37 +290,33 @@ pub fn init(hba: &pci::PciDevice) {
     }
 }
 
-struct AhciDevice {
-    pub regs: &'static mut PortRegisters,
-}
+pub fn read(device_index: usize, offset: u64, bytes: usize, buffer: *mut u8) -> Result<usize, ()> {
+    let device = unsafe { &AHCI_DEVICES[device_index] };
+    let tmp_buffer: *mut u8 = pmm::get()
+        .calloc(div_ceil(bytes, pmm::PAGE_SIZE as usize))
+        .expect("[AHCI] could not allocate temp buffer")
+        .higher_half()
+        .as_mut_ptr();
 
-impl AhciDevice {
-    // we use the clb and fb provided by the firmware
-    unsafe fn new(regs: &'static mut PortRegisters) -> Self {
-        for i in 0..32 {
-            let cmd_header = regs.get_command_header(i);
+    let access_result =
+        device
+            .regs
+            .send_command(offset / 512, div_ceil(bytes, 512) as u16, tmp_buffer, false);
 
-            let cmd_table_pages = div_ceil(size_of::<CommandTable>(), pmm::PAGE_SIZE as usize);
-            let cmd_table = pmm::get()
-                .calloc(cmd_table_pages)
-                .expect("Could not allocate the pages needed for the command list (AHCI)")
-                as u64;
-
-            for i in (0..cmd_table_pages * pmm::PAGE_SIZE as usize).step_by(pmm::PAGE_SIZE as usize)
-            {
-                vmm::get().map_page(
-                    cmd_table + pmm::PHYS_BASE + i as u64,
-                    cmd_table + i as u64,
-                    PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::UNCACHEABLE,
-                    true,
-                );
-            }
-
-            cmd_header.ctaddr_lower.set(cmd_table as u32);
-            cmd_header.ctaddr_upper.set((cmd_table >> 32) as u32);
+    if let Ok(bc) = access_result {
+        unsafe {
+            buffer.copy_from(tmp_buffer.offset((offset % 512) as isize), bytes);
         }
 
-        let device = AhciDevice { regs };
-        device
+        Ok(bc)
+    } else {
+        access_result
     }
+}
+
+pub fn write(device_index: usize, lba: u64, sectors: u16, buffer: *const ()) -> Result<usize, ()> {
+    let device = unsafe { &AHCI_DEVICES[device_index] };
+    return device
+        .regs
+        .send_command(lba, sectors, buffer as *mut u8, true);
 }

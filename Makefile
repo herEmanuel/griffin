@@ -1,13 +1,14 @@
 ISO_IMAGE = disk.iso
+DISK_IMAGE = griffin.img
 GRIFFIN = target/target/debug/griffin
 
 .PHONY: all
 all: $(ISO_IMAGE)
 
 .PHONY: run
-run: $(ISO_IMAGE)
-	qemu-system-x86_64.exe -M q35 -m 2G \
-		-drive id=disk,format=raw,file=griffin.img,if=none \
+run: $(ISO_IMAGE) $(DISK_IMAGE)
+	qemu-system-x86_64.exe -M q35 -m 2G -boot d\
+		-drive id=disk,format=raw,file=$(DISK_IMAGE),if=none \
 		-device ahci,id=ahci \
 		-device ide-hd,drive=disk,bus=ahci.0 \
 		-serial file:CON -monitor stdio -cdrom $(ISO_IMAGE)
@@ -44,6 +45,14 @@ $(ISO_IMAGE): limine griffin
 		iso_root -o $(ISO_IMAGE)
 	limine/limine-install $(ISO_IMAGE)
 	rm -rf iso_root
+
+$(DISK_IMAGE): 
+	dd if=/dev/zero bs=1MB count=10 of=$(DISK_IMAGE)
+	parted -s $(DISK_IMAGE) mklabel gpt
+	parted -s $(DISK_IMAGE) mkpart primary 0% 100%
+	sudo losetup -P /dev/loop0 griffin.img
+	sudo mkfs.ext2 /dev/loop0p1
+	sudo losetup -d /dev/loop0 
 
 .PHONY: clean
 clean:

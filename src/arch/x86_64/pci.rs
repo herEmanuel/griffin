@@ -1,6 +1,6 @@
 use super::io::{inl, outl};
+use crate::arch::x86_64::mm::pmm::PhysAddr;
 use crate::drivers::ahci;
-use crate::serial;
 use alloc::vec::Vec;
 
 const CONFIG_ADDR: u16 = 0xCF8;
@@ -63,22 +63,24 @@ impl PciDevice {
         }
     }
 
-    pub fn get_bar(&self, bar_num: u8) -> u64 {
+    pub fn get_bar(&self, bar_num: u8) -> PhysAddr {
         let offset = 0x10 + bar_num * 4;
         let bar = read(self.bus, self.device, self.function, offset);
 
         if bar & 1 == 1 {
             // I/O space
-            return (bar & !0b11) as u64;
+            return PhysAddr::new((bar & !0b11) as u64);
         }
 
         if bar & 6 == 4 {
             // 64 bits bar
-            return (bar & 0xfffffff0) as u64
-                | (read(self.bus, self.device, self.function, offset + 4) as u64) << 32;
+            return PhysAddr::new(
+                (bar & 0xfffffff0) as u64
+                    | (read(self.bus, self.device, self.function, offset + 4) as u64) << 32,
+            );
         }
 
-        (bar & 0xfffffff0) as u64
+        PhysAddr::new((bar & 0xfffffff0) as u64)
     }
 
     pub fn bus_master(&self) {

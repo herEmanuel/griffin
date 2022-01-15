@@ -18,6 +18,7 @@ use stivale_boot::v2::{
 
 pub mod arch;
 pub mod drivers;
+pub mod fs;
 pub mod mm;
 pub mod serial;
 pub mod spinlock;
@@ -44,13 +45,13 @@ extern "C" fn _start(_tags: usize) -> ! {
 
     let framebuffer_tag = tags.framebuffer().unwrap();
     let mmap_tag = tags.memory_map().unwrap();
+    let rsdp_tag = tags.rsdp().unwrap();
+    serial::print!("rsdp at: {:#x}\n", rsdp_tag.rsdp);
 
     let mut video = video::Video::new(framebuffer_tag);
 
     video.print("Hello, world, from Rust!\n");
     video.print("Is everything fine?");
-
-    // video.print("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Suspendisse dictum ligula erat, sit amet lobortis lacus facilisis id. Cras at congue enim. Aenean arcu arcu, aliquam vitae vehicula id, cursus in diam. Quisque et elit euismod, pulvinar nunc eget, venenatis felis. Etiam leo lorem, egestas ut luctus sit amet, posuere quis velit. Quisque ac felis suscipit, facilisis libero et, rhoncus felis. Curabitur id congue leo. Donec lobortis, arcu ac hendrerit commodo, velit ante tempus libero, sed pellentesque sem turpis sed tortor. Vestibulum feugiat egestas mauris vulputate ultrices. ");
 
     unsafe {
         arch::x86_64::gdt::init();
@@ -63,19 +64,13 @@ extern "C" fn _start(_tags: usize) -> ! {
         serial::print!("pmm done yey\n");
         vmm::init();
         slab::init();
+        arch::x86_64::acpi::init(rsdp_tag);
     }
 
     serial::print!("slab allocator running\n");
 
     arch::x86_64::pci::enumerate_devices();
-    unsafe {
-        slab::SLAB_ALLOCATOR.dump();
-    }
-    let mut msg = alloc::string::String::from("hellooooppl");
-    msg.push_str("ayup");
-
-    msg.push_str("huh");
-    serial::print!("{}\n", msg);
+    fs::partitions::scan();
 
     unsafe {
         cpu::halt();
