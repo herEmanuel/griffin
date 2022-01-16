@@ -298,10 +298,18 @@ pub fn read(device_index: usize, offset: u64, bytes: usize, buffer: *mut u8) -> 
         .higher_half()
         .as_mut_ptr();
 
-    let access_result =
-        device
-            .regs
-            .send_command(offset / 512, div_ceil(bytes, 512) as u16, tmp_buffer, false);
+    /*
+        bytes + (offset % 512) will make sure than unaligned reads that span more than one sector
+        will work
+
+        E.g. a read from offset 510 and with byte count of 4 needs to get the contents of 2 sectors
+        in order to retrieve those 4 bytes
+    */
+    let sectors = div_ceil(bytes + (offset % 512) as usize, 512) as u16;
+
+    let access_result = device
+        .regs
+        .send_command(offset / 512, sectors, tmp_buffer, false);
 
     if let Ok(bc) = access_result {
         unsafe {

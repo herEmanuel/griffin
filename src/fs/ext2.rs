@@ -90,7 +90,6 @@ struct Inode {
     os_specific2: [u32; 3],
 }
 
-//offset 0     bytes 4563
 impl Inode {
     pub fn read(
         &self,
