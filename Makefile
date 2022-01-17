@@ -15,7 +15,7 @@ run: $(ISO_IMAGE) $(DISK_IMAGE)
 
 .PHONY: test
 test: $(ISO_IMAGE)
-	qemu-system-x86_64.exe -M q35 -m 2G -d int -M smm=off \
+	qemu-system-x86_64.exe -M q35 -m 2G -boot d -d int -M smm=off \
 		-drive id=disk,file=griffin.img,if=none \
 		-device ahci,id=ahci \
 		-device ide-hd,drive=disk,bus=ahci.0 \

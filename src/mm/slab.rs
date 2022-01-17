@@ -69,7 +69,6 @@ impl<'a> Cache<'a> {
     }
 
     unsafe fn free_obj(&mut self, ptr: *mut u8) {
-        serial::print!("at free obj\n");
         // we may want to free the slabs that are not being used... but not now
         let mut curr_slab = &mut *self.slabs;
 
@@ -126,7 +125,6 @@ impl Slab {
     }
 
     unsafe fn alloc(&mut self) -> *mut u8 {
-        serial::print!("at alloc\n");
         if self.free_objs == 0 {
             return null_mut();
         }
@@ -137,10 +135,6 @@ impl Slab {
             if bitmap.bit_at(i) == 0 {
                 bitmap.set_bit(i);
                 self.free_objs -= 1;
-                serial::print!(
-                    "addr go brr: {:p}\n",
-                    &*self.data.offset((i * self.object_size) as isize)
-                );
 
                 self.bitmap.unlock();
                 return self.data.offset((i * self.object_size) as isize);
@@ -152,7 +146,6 @@ impl Slab {
     }
 
     unsafe fn dealloc(&mut self, ptr: *mut u8) {
-        serial::print!("at dealloc\n");
         let bit = (ptr as usize - self.data as usize) / self.object_size;
         let bitmap = self.bitmap.lock();
 
@@ -182,9 +175,6 @@ impl<'a> SlabAllocator<'a> {
         let mut curr_cache = self.caches;
 
         while !curr_cache.is_null() && (*curr_cache).object_size < size {
-            if size == 11 {
-                serial::print!("cache size: {}\n", (*curr_cache).object_size);
-            }
             curr_cache = (*curr_cache).next;
         }
 
@@ -210,6 +200,8 @@ impl<'a> SlabAllocator<'a> {
 }
 
 pub unsafe fn init() {
+    SLAB_ALLOCATOR.add_cache("4096 bytes", 4096);
+    SLAB_ALLOCATOR.add_cache("2048 bytes", 2048);
     SLAB_ALLOCATOR.add_cache("1024 bytes", 1024);
     SLAB_ALLOCATOR.add_cache("512 bytes", 512);
     SLAB_ALLOCATOR.add_cache("256 bytes", 256);
@@ -222,9 +214,7 @@ pub unsafe fn init() {
 
 unsafe impl<'a> GlobalAlloc for SlabAllocator<'a> {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        serial::print!("allocation size: {}\n", layout.size());
         if let Some(cache) = SLAB_ALLOCATOR.cache_for(layout.size()) {
-            serial::print!("cache size: {}\n", (*cache).object_size);
             (*cache).alloc_obj()
         } else {
             panic!("Could not find a cache large enough to suffice the heap allocation");
@@ -232,9 +222,7 @@ unsafe impl<'a> GlobalAlloc for SlabAllocator<'a> {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
-        serial::print!("deallocation size: {}\n", layout.size());
         if let Some(cache) = SLAB_ALLOCATOR.cache_for(layout.size()) {
-            serial::print!("cache size: {}\n", (*cache).object_size);
             (*cache).free_obj(ptr)
         } else {
             panic!("Tried do deallocate memory not allocated by the heap");

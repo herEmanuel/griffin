@@ -1,5 +1,6 @@
 use crate::serial;
 use crate::spinlock::Spinlock;
+use crate::utils::bitmap;
 use core::ptr::null_mut;
 use stivale_boot::v2::{StivaleMemoryMapEntry, StivaleMemoryMapEntryType};
 
@@ -97,12 +98,12 @@ impl Pmm {
     }
 
     pub fn free(&mut self, ptr: *mut u8, pages_amnt: usize) {
-        let page = ptr as u64 / PAGE_SIZE;
-        let bitmap = self.bitmap.lock();
+        let page = (ptr as u64 & !PHYS_BASE) / PAGE_SIZE;
+        let bitmap = *self.bitmap.lock();
 
-        for i in page..page + pages_amnt as u64 {
+        for i in page..(page + pages_amnt as u64) {
             unsafe {
-                *bitmap.offset((i / 8) as isize) |= 1 << (7 - i % 8);
+                bitmap::set_bit(bitmap, i as usize);
             }
         }
 

@@ -322,9 +322,33 @@ pub fn read(device_index: usize, offset: u64, bytes: usize, buffer: *mut u8) -> 
     }
 }
 
-pub fn write(device_index: usize, lba: u64, sectors: u16, buffer: *const ()) -> Result<usize, ()> {
+pub fn write(device_index: usize, offset: u64, bytes: usize, buffer: *mut u8) -> Result<usize, ()> {
     let device = unsafe { &AHCI_DEVICES[device_index] };
-    return device
+    let tmp_buffer: *mut u8 = pmm::get()
+        .calloc(div_ceil(bytes, pmm::PAGE_SIZE as usize))
+        .expect("[AHCI] could not allocate temp buffer")
+        .higher_half()
+        .as_mut_ptr();
+
+    let sectors = div_ceil(bytes + (offset % 512) as usize, 512) as u16;
+
+    let mut access_result = device
         .regs
-        .send_command(lba, sectors, buffer as *mut u8, true);
+        .send_command(offset / 512, sectors, tmp_buffer, false);
+
+    if let Ok(_) = access_result {
+        unsafe {
+            tmp_buffer
+                .offset((offset % 512) as isize)
+                .copy_from(buffer, bytes);
+        }
+
+        access_result = device
+            .regs
+            .send_command(offset / 512, sectors, tmp_buffer, true);
+
+        access_result
+    } else {
+        access_result
+    }
 }
