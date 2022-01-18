@@ -47,12 +47,22 @@ $(ISO_IMAGE): limine griffin
 	rm -rf iso_root
 
 $(DISK_IMAGE): 
-	dd if=/dev/zero bs=1MB count=10 of=$(DISK_IMAGE)
+	dd if=/dev/zero bs=1MB count=100 of=$(DISK_IMAGE)
 	parted -s $(DISK_IMAGE) mklabel gpt
 	parted -s $(DISK_IMAGE) mkpart primary 0% 100%
 	sudo losetup -P /dev/loop0 griffin.img
 	sudo mkfs.ext2 /dev/loop0p1
+	rm -rf griffin_img
+	mkdir griffin_img
+	sudo mount /dev/loop0p1 griffin_img/
+	sudo mkdir griffin_img/home
+
+	sudo cp target.json linker.ld griffin_img/
+	sudo cp limine.cfg griffin_img/home/limine.cfg
+
+	sudo umount griffin_img
 	sudo losetup -d /dev/loop0 
+	rm -rf griffin_img
 
 .PHONY: clean
 clean:

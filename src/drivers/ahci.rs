@@ -165,6 +165,7 @@ impl PortRegisters {
         None
     }
 
+    // TODO: zero structs
     // if it succeeds, it will return the number of bytes read/written
     // max number of bytes that can be read/written with one command is 4MB (only 1 prdt is used)
     pub fn send_command(
@@ -204,12 +205,16 @@ impl PortRegisters {
         while self.ci.get() & (1 << slot) != 0 {
             if self.interrupt_status.get() & (1 << 30) != 0 {
                 serial::print!("[AHCI] error while executing a command\n");
+                serial::print!("1\n");
+                serial::print!("LBA: {}, sectors: {}, buffer: {:?}\n", lba, sectors, buffer);
                 return Err(());
             }
         }
 
         if self.interrupt_status.get() & (1 << 30) != 0 {
             serial::print!("[AHCI] error while executing a command\n");
+            serial::print!("2\n");
+            serial::print!("LBA: {}, sectors: {}, buffer: {:?}\n", lba, sectors, buffer);
             return Err(());
         }
 
@@ -322,7 +327,12 @@ pub fn read(device_index: usize, offset: u64, bytes: usize, buffer: *mut u8) -> 
     }
 }
 
-pub fn write(device_index: usize, offset: u64, bytes: usize, buffer: *mut u8) -> Result<usize, ()> {
+pub fn write(
+    device_index: usize,
+    offset: u64,
+    bytes: usize,
+    buffer: *const u8,
+) -> Result<usize, ()> {
     let device = unsafe { &AHCI_DEVICES[device_index] };
     let tmp_buffer: *mut u8 = pmm::get()
         .calloc(div_ceil(bytes, pmm::PAGE_SIZE as usize))
