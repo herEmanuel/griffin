@@ -1,8 +1,9 @@
+use super::vfs::OpenFlags;
 use crate::arch::x86_64::mm::pmm;
 use crate::drivers::ahci;
 use crate::serial;
 use crate::utils::bitmap;
-use crate::utils::math::div_ceil;
+use crate::utils::math::{div_ceil, round_up};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -58,6 +59,21 @@ struct Superblock {
     maj_version: u32,
     user_id: u16,
     group_id: u16,
+}
+
+impl Superblock {
+    pub fn flush(&self) {
+        let fs = unsafe { EXT2_FS.clone().unwrap() };
+        let starting_lba = fs.starting_lba;
+
+        ahci::write(
+            0,
+            (starting_lba as u64 + 2) * 512,
+            size_of::<Superblock>(),
+            self as *const Superblock as *const u8,
+        )
+        .unwrap();
+    }
 }
 
 #[repr(C, packed)]
@@ -318,12 +334,13 @@ impl Inode {
         let inode_table = BlockGroup::get(Inode::get_block_group(self.inode_number as usize))
             .raw
             .inode_table;
+        let inode_index = Inode::get_table_index(self.inode_number as usize);
 
         ahci::write(
             0,
             (starting_lba * 512
                 + inode_table as usize * block_size
-                + self.inode_number as usize * size_of::<Inode>()) as u64,
+                + inode_index as usize * size_of::<Inode>()) as u64,
             size_of::<Inode>(),
             self as *const Inode as *const u8,
         )
@@ -741,22 +758,37 @@ impl DirectoryEntry {
             let curr_entry =
                 unsafe { &mut *(entries_buffer.offset(i as isize) as *mut DirectoryEntry) };
 
-            let true_size = size_of::<DirectoryEntry>() + curr_entry.name_length as usize;
+            let mut true_size = size_of::<DirectoryEntry>() + curr_entry.name_length as usize;
+
+            /*
+                The size of every entry must be a multiple of 4 so that each
+                directory entry is guaranted to be 4 bytes aligned
+            */
+            true_size = round_up(true_size, 4);
 
             // the entry has some empty space in it
             if curr_entry.entry_size as usize > true_size {
                 let empty_space = curr_entry.entry_size as usize - true_size;
 
+                let mut space_needed = size_of::<DirectoryEntry>() + name.len();
+                space_needed = round_up(space_needed, 4);
+
                 // if the empty space is not large enough to store the new entry, we continue the loop
-                if empty_space < size_of::<DirectoryEntry>() + name.len() {
+                if empty_space < space_needed {
                     i += curr_entry.entry_size as u32;
                     continue;
                 }
-
+                serial::print!("empty space: {}, true size: {}\n", empty_space, true_size);
                 let new_entry = unsafe {
                     &mut *(entries_buffer.offset((i as usize + true_size) as isize)
                         as *mut DirectoryEntry)
                 };
+
+                for p in 0..10 {
+                    let byte =
+                        unsafe { *(entries_buffer.offset((i + true_size as u32 + p) as isize)) };
+                    serial::print!("{:#x} ", byte);
+                }
 
                 curr_entry.entry_size = true_size as u16;
                 new_entry.name_length = name.len() as u8;
@@ -772,6 +804,8 @@ impl DirectoryEntry {
                 }
                 //TODO: this isnt working
                 serial::print!("curr entry: {:?}\n", curr_entry);
+                serial::print!("new entry: {:?}\n", new_entry);
+
                 dir.write(0, dir.sizel as usize, entries_buffer).unwrap();
 
                 return Ok(());
@@ -804,12 +838,19 @@ impl Ext2Filesystem {
         }
     }
 
-    // TODO: alloc multiple blocks at the same time
+    // TODO: allocate multiple blocks at the same time
     pub fn alloc_block(&self) -> Option<u32> {
+        if self.superblock.unallocated_blocks == 0 {
+            return None;
+        }
+
         for bg in 0..self.block_group_cnt {
             let mut block_group = BlockGroup::get(bg);
 
             if let Some(block_addr) = block_group.alloc_block(1) {
+                // TODO: make this possible
+                // self.superblock.unallocated_blocks -= 1;
+                // self.superblock.flush();
                 return Some(block_addr[0]);
             }
         }
@@ -817,7 +858,26 @@ impl Ext2Filesystem {
         None
     }
 
-    pub fn open(&self, raw_path: &str) -> Option<Box<Inode>> {
+    pub fn alloc_inode(&self) -> Option<u32> {
+        if self.superblock.unallocated_inodes == 0 {
+            return None;
+        }
+
+        for bg in 0..self.block_group_cnt {
+            let mut block_group = BlockGroup::get(bg);
+
+            if let Some(inode_addr) = block_group.alloc_inode() {
+                // TODO: make this possible
+                // self.superblock.unallocated_inodes -= 1;
+                // self.superblock.flush();
+                return Some(inode_addr);
+            }
+        }
+
+        None
+    }
+
+    pub fn open(&self, raw_path: &str, flags: OpenFlags) -> Option<Box<Inode>> {
         serial::print!("===============at open==============\n");
         let root_dir = Inode::get(ROOT_DIR_INODE);
         let mut current_dir = root_dir;
@@ -847,7 +907,23 @@ impl Ext2Filesystem {
 
                 current_dir = entry_inode;
             } else {
-                return None; //TODO: create the inode when told so by the flags
+                if i + 1 == path.len() && flags.contains(OpenFlags::O_CREAT) {
+                    let new_inode_addr = self
+                        .alloc_inode()
+                        .expect("[EXT2] Could not allocate a new inode");
+
+                    let mut new_inode = Inode::get(new_inode_addr);
+                    new_inode.type_and_permissions = 0x81ed;
+                    new_inode.ref_cnt = 1;
+                    new_inode.flush();
+
+                    DirectoryEntry::add_entry(&mut current_dir, new_inode_addr, path_fragment)
+                        .unwrap();
+
+                    return Some(new_inode);
+                }
+
+                return None;
             }
         }
 
@@ -887,23 +963,35 @@ pub fn try_and_init(starting_lba: u64) -> Result<(), ()> {
     unsafe {
         let fs = EXT2_FS.clone().unwrap();
         let mut root_dir = Inode::get(ROOT_DIR_INODE);
-        let liminecfg = fs.open("/home/limine.cfg").unwrap();
-        serial::print!("file size: {}\n", liminecfg.sizel);
+        // let liminecfg = fs.open("/home/limine.cfg").unwrap();
+        // serial::print!("limine.cfg: {:?}\n", liminecfg);
+        // let linkerld = fs.open("/linker.ld").unwrap();
+        // serial::print!("linker.ld: {:?}\n", linkerld);
 
-        let mut bgd = BlockGroup::get(0);
-        serial::print!("========== GOT HERE ==============\n");
-        // let blocks = bgd.alloc_block(20).expect("could not allocate the blocks");
-        // serial::print!("blocks: {:?}\n", blocks);
-        let new_inode = bgd.alloc_inode().unwrap();
-        serial::print!("new inode: {}\n", new_inode);
-        DirectoryEntry::add_entry(&mut root_dir, new_inode, "helloworld.txt").unwrap();
-        let mut hw = Inode::get(new_inode);
-        serial::print!("got hw inode\n");
-        let buffer: *mut u8 = pmm::get().calloc(1).unwrap().higher_half().as_mut_ptr();
-        liminecfg.read(0, liminecfg.sizel as usize, buffer);
-        serial::print!("read from limine.cfg\n");
-        hw.write(0, liminecfg.sizel as usize, buffer);
-        serial::print!("wrote to helloworld.txt\n");
+        // let mut bgd = BlockGroup::get(0);
+        // serial::print!("========== GOT HERE ==============\n");
+        // bgd.alloc_inode().unwrap();
+        // let new_inode = bgd.alloc_inode().unwrap();
+        // serial::print!("new inode: {}\n", new_inode);
+        // DirectoryEntry::add_entry(&mut root_dir, new_inode, "helloworld.txt").unwrap();
+        // let mut hw = Inode::get(new_inode);
+        // hw.type_and_permissions = 0x81ed;
+        // hw.ref_cnt = 1;
+        // hw.last_access_time = 0xdeadbeef;
+        // hw.creation_time = 1642615168;
+        // hw.last_mod_time = 1642615168;
+        // hw.gen_num = 3683931716;
+        // hw.flush();
+        // serial::print!("got hw inode\n");
+        // let buffer: *mut u8 = pmm::get().calloc(1).unwrap().higher_half().as_mut_ptr();
+        // liminecfg.read(0, liminecfg.sizel as usize, buffer);
+        // serial::print!("read from limine.cfg\n");
+        // hw.write(0, liminecfg.sizel as usize, buffer);
+        // serial::print!("wrote to helloworld.txt\n");
+        // serial::print!("hw struct: {:?}\n", hw);
+
+        fs.open("/home/test.txt", OpenFlags::O_CREAT);
+        fs.open("/home/hello.txt", OpenFlags::O_CREAT);
     }
     Ok(())
 }
