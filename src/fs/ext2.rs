@@ -1,4 +1,4 @@
-use super::vfs::OpenFlags;
+use super::vfs;
 use crate::arch::x86_64::mm::pmm;
 use crate::drivers::ahci;
 use crate::serial;
@@ -877,7 +877,7 @@ impl Ext2Filesystem {
         None
     }
 
-    pub fn open(&self, raw_path: &str, flags: OpenFlags) -> Option<Box<Inode>> {
+    pub fn open(&self, raw_path: &str, flags: vfs::Flags, mode: vfs::Mode) -> Option<Box<Inode>> {
         serial::print!("===============at open==============\n");
         let root_dir = Inode::get(ROOT_DIR_INODE);
         let mut current_dir = root_dir;
@@ -907,7 +907,7 @@ impl Ext2Filesystem {
 
                 current_dir = entry_inode;
             } else {
-                if i + 1 == path.len() && flags.contains(OpenFlags::O_CREAT) {
+                if i + 1 == path.len() && flags.contains(vfs::Flags::O_CREAT) {
                     let new_inode_addr = self
                         .alloc_inode()
                         .expect("[EXT2] Could not allocate a new inode");
@@ -990,8 +990,8 @@ pub fn try_and_init(starting_lba: u64) -> Result<(), ()> {
         // serial::print!("wrote to helloworld.txt\n");
         // serial::print!("hw struct: {:?}\n", hw);
 
-        fs.open("/home/test.txt", OpenFlags::O_CREAT);
-        fs.open("/home/hello.txt", OpenFlags::O_CREAT);
+        fs.open("/home/test.txt", vfs::Flags::O_CREAT, vfs::Mode::empty());
+        fs.open("/home/hello.txt", vfs::Flags::O_CREAT, vfs::Mode::empty());
     }
     Ok(())
 }
