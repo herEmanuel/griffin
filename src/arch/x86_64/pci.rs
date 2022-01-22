@@ -1,5 +1,5 @@
 use super::io::{inl, outl};
-use crate::arch::x86_64::mm::pmm::PhysAddr;
+use crate::arch::mm::pmm::PhysAddr;
 use crate::drivers::ahci;
 use alloc::vec::Vec;
 

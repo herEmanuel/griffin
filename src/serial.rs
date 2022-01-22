@@ -1,4 +1,4 @@
-use crate::arch::x86_64::io::{inb, outb};
+use crate::arch::io::{inb, outb};
 use core::fmt::Write;
 
 const COM1: u16 = 0x3f8;

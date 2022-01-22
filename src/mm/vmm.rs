@@ -1,4 +1,4 @@
-use crate::arch::x86_64::mm::pmm::{self, PhysAddr};
+use crate::arch::mm::pmm::{self, PhysAddr};
 use alloc::vec::Vec;
 
 bitflags::bitflags! {

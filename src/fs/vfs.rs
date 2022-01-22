@@ -1,8 +1,4 @@
-use crate::serial;
-use alloc::boxed::Box;
-use alloc::string::String;
-use alloc::vec::Vec;
-use core::ptr::null_mut;
+use alloc::{string::String, vec::Vec};
 
 static mut MOUNT_POINTS: Vec<MountPoint> = alloc::vec![];
 
@@ -18,17 +14,45 @@ bitflags::bitflags! {
 
     pub struct Mode: u32 {
     }
+
+    pub struct FileType: u16 {
+        const FIFO = 1 << 12;
+        const CHAR_DEVICE = 1 << 13;
+        const DIRECTORY = 1 << 14;
+        const BLOCK_DEVICE = 1 << 14 | 1 << 13;
+        const NORMAL = 1 << 15;
+        const SYMLINK = 1 << 15 | 1 << 13;
+        const SOCKET = 1 << 15 | 1 << 14;
+    }
+
+    pub struct FilePermissions: u16 {
+        const USER_READ = 1 << 8;
+        const USER_WRITE = 1 << 7;
+        const USER_EXEC = 1 << 6;
+    }
 }
 
-pub struct FileDescription {
-    mode: Flags,
+pub struct FileDescription<'a> {
+    flags: Flags,
     offset: usize,
-    file: *mut u8,
+    fs: &'a dyn Filesystem,
+    pub file_index: usize, // an index for the filesystem-specific table of open files
+}
+
+impl<'a> FileDescription<'a> {
+    pub fn new(index: usize, flags: Flags, fs: &'a dyn Filesystem) -> Self {
+        FileDescription {
+            flags,
+            offset: 0,
+            fs,
+            file_index: index,
+        }
+    }
 }
 
 pub struct MountPoint {
     name: String,
-    fs: Option<Box<dyn Filesystem>>,
+    fs: Option<&'static dyn Filesystem>,
 }
 
 impl MountPoint {
@@ -41,13 +65,13 @@ impl MountPoint {
 }
 
 pub trait Filesystem {
-    fn open(&self, path: &str, flags: Flags, mode: Mode) -> FileDescription;
-    fn mkdir(&self, path: &str, mode: Mode) -> FileDescription;
-    fn read(&self, node: FileDescription, buffer: *mut u8, cnt: usize) -> usize;
-    fn write(&self, node: FileDescription, buffer: *const u8, cnt: usize) -> usize;
+    fn open(&self, path: &str, flags: Flags, mode: Mode) -> Option<FileDescription>;
+    fn mkdir(&self, path: &str, mode: Mode) -> Option<FileDescription>;
+    fn read(&self, index: usize, buffer: *mut u8, cnt: usize, offset: usize) -> usize;
+    fn write(&self, index: usize, buffer: *const u8, cnt: usize, offset: usize) -> usize;
 }
 
-pub fn mount(fs: Box<dyn Filesystem>, target: &str) -> bool {
+pub fn mount(fs: &'static dyn Filesystem, target: &str) -> bool {
     if target.chars().nth(0) != Some('/') {
         return false;
     }
@@ -68,6 +92,58 @@ pub fn mount(fs: Box<dyn Filesystem>, target: &str) -> bool {
     true
 }
 
-pub fn get_mount_point(path: &str) -> Option<(&str, &MountPoint)> {
-    None
+pub fn get_mount_point(path: &str) -> Option<&MountPoint> {
+    let mut curr_mp: Option<&MountPoint> = None;
+    for mount_point in unsafe { MOUNT_POINTS.iter() } {
+        if path.contains(mount_point.name.as_str()) {
+            if let Some(mp) = curr_mp {
+                if mount_point.name.len() > mp.name.len() {
+                    curr_mp = Some(mount_point);
+                }
+            } else {
+                curr_mp = Some(mount_point);
+            }
+        }
+    }
+
+    curr_mp
+}
+
+pub fn open(path: &str, flags: Flags, mode: Mode) -> Option<FileDescription> {
+    if path.chars().nth(0) != Some('/') {
+        // relative path, not supported atm
+        return None;
+    }
+
+    if let Some(mount_point) = get_mount_point(path) {
+        mount_point
+            .fs
+            .as_ref()
+            .unwrap()
+            .open(&path[mount_point.name.len()..], flags, mode)
+    } else {
+        // TODO: report the error
+        None
+    }
+}
+
+pub fn mkdir(path: &str, mode: Mode) -> Option<FileDescription> {
+    if let Some(mount_point) = get_mount_point(path) {
+        mount_point
+            .fs
+            .as_ref()
+            .unwrap()
+            .mkdir(&path[mount_point.name.len()..], mode)
+    } else {
+        // TODO: report the error
+        None
+    }
+}
+
+pub fn read(fd: FileDescription, buffer: *mut u8, cnt: usize) -> usize {
+    fd.fs.read(fd.file_index, buffer, cnt, fd.offset)
+}
+
+pub fn write(fd: FileDescription, buffer: *const u8, cnt: usize) -> usize {
+    fd.fs.write(fd.file_index, buffer, cnt, fd.offset)
 }

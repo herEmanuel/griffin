@@ -1,3 +1,4 @@
+use super::cpu;
 use crate::serial;
 
 #[repr(C, packed)]
@@ -98,6 +99,7 @@ pub unsafe fn init() {
     register_isr(0x3, int3 as u64, 0, 0x8E);
     register_isr(0x6, invalid_opcode as u64, 0, 0x8E);
     register_isr(0xE, page_fault as u64, 0, 0x8E);
+    register_isr(0x20, timer as u64, 0, 0x8E);
 
     IDT_DESCRIPTOR.offset = &IDT as *const IdtGate as u64;
     asm!("lidt [{}]", in(reg) &IDT_DESCRIPTOR);
@@ -119,4 +121,9 @@ isr!(invalid_opcode, {
     loop {
         asm!("hlt");
     }
+});
+
+isr!(timer, {
+    serial::print!("timer!!!\n");
+    cpu::halt();
 });

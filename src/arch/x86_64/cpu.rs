@@ -82,6 +82,28 @@ pub fn start() {
     }
 }
 
+#[repr(u32)]
+pub enum MsrList {
+    ApicBase = 0x1b,
+}
+
+pub fn rdmsr(msr: MsrList) -> u64 {
+    let mut low: u32;
+    let mut high: u32;
+
+    unsafe {
+        asm!("rdmsr", in("ecx") msr as u32, out("eax") low, out("edx") high);
+    }
+
+    low as u64 | (high as u64) << 32
+}
+
+pub fn wrmsr(msr: MsrList, value: u64) {
+    unsafe {
+        asm!("wrmsr", in("ecx") msr as u32, in("eax") value as u32, in("edx") (value >> 32) as u32);
+    }
+}
+
 pub fn halt() -> ! {
     unsafe {
         loop {

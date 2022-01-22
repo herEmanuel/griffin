@@ -4,7 +4,7 @@
     still needs some testing
 */
 
-use crate::arch::x86_64::mm::pmm;
+use crate::arch::mm::pmm;
 use crate::serial;
 use crate::spinlock::Spinlock;
 use crate::utils::{bitmap, math};

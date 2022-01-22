@@ -1,5 +1,5 @@
 use super::ext2;
-use crate::arch::x86_64::mm::pmm;
+use crate::arch::mm::pmm;
 use crate::drivers::ahci;
 use crate::serial;
 use crate::utils::math::div_ceil;

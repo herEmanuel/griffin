@@ -1,39 +1,22 @@
 use super::vfs;
-use crate::arch::x86_64::mm::pmm;
-use crate::drivers::ahci;
-use crate::serial;
-use crate::utils::bitmap;
+use crate::arch::mm::pmm;
 use crate::utils::math::{div_ceil, round_up};
-use alloc::boxed::Box;
-use alloc::sync::Arc;
-use alloc::vec::Vec;
+use crate::{drivers::ahci, serial, utils::bitmap};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::intrinsics::size_of;
+use core::ops::Deref;
 
 const EXT2_SIGNATURE: u16 = 0xef53;
 const ROOT_DIR_INODE: u32 = 0x2;
+const MAX_OPEN_FILE_CNT: usize = 1024;
+const INODE_TABLE_INIT: Option<Box<Inode>> = None;
 
 static mut EXT2_FS: Option<Arc<Ext2Filesystem>> = None;
-
-bitflags::bitflags! {
-    pub struct FileType: u16 {
-        const FIFO = 1 << 12;
-        const CHAR_DEVICE = 1 << 13;
-        const DIRECTORY = 1 << 14;
-        const BLOCK_DEVICE = 1 << 14 | 1 << 13;
-        const NORMAL = 1 << 15;
-        const SYMLINK = 1 << 15 | 1 << 13;
-        const SOCKET = 1 << 15 | 1 << 14;
-    }
-
-    pub struct FilePermissions: u16 {
-        const USER_READ = 1 << 8;
-        const USER_WRITE = 1 << 7;
-        const USER_EXEC = 1 << 6;
-    }
-}
+static mut INODE_TABLE: [Option<Box<Inode>>; MAX_OPEN_FILE_CNT] =
+    [INODE_TABLE_INIT; MAX_OPEN_FILE_CNT];
 
 #[repr(C, packed)]
-struct Superblock {
+pub struct Superblock {
     inode_cnt: u32,
     block_cnt: u32,
     reserved_blocks_cnt: u32,
@@ -279,7 +262,7 @@ impl BlockGroup {
 
 #[repr(C, packed)]
 #[derive(Debug)]
-struct Inode {
+pub struct Inode {
     type_and_permissions: u16,
     user_id: u16,
     sizel: u32,
@@ -315,15 +298,15 @@ impl Inode {
     }
 
     pub fn is_directory(&self) -> bool {
-        self.type_and_permissions & FileType::DIRECTORY.bits() != 0
+        self.type_and_permissions & vfs::FileType::DIRECTORY.bits() != 0
     }
 
     pub fn is_regular_file(&self) -> bool {
-        self.type_and_permissions & FileType::NORMAL.bits() != 0
+        self.type_and_permissions & vfs::FileType::NORMAL.bits() != 0
     }
 
     pub fn is_symlink(&self) -> bool {
-        self.type_and_permissions & FileType::SYMLINK.bits() != 0
+        self.type_and_permissions & vfs::FileType::SYMLINK.bits() != 0
     }
 
     pub fn flush(&self) {
@@ -700,10 +683,10 @@ impl DirectoryEntry {
             return None;
         }
 
-        // TODO: free that (bruh im so lazy)
         // just try to search a big directory and we will have some serious troubles
+        let entries_buffer_pages = div_ceil(inode.sizel as usize, pmm::PAGE_SIZE as usize);
         let entries_buffer: *mut u8 = pmm::get()
-            .calloc(div_ceil(inode.sizel as usize, pmm::PAGE_SIZE as usize))
+            .calloc(entries_buffer_pages)
             .expect("Could not allocate the pages for the directory entries")
             .higher_half()
             .as_mut_ptr();
@@ -728,15 +711,13 @@ impl DirectoryEntry {
                 )
             };
 
-            serial::print!(
-                "entry name: {}\n",
-                core::str::from_utf8(entry_name).unwrap()
-            );
             if entry_name == name.as_bytes() {
+                pmm::get().free(entries_buffer, entries_buffer_pages);
                 return Some(curr_entry.inode);
             }
         }
 
+        pmm::get().free(entries_buffer, entries_buffer_pages);
         None
     }
 
@@ -745,8 +726,9 @@ impl DirectoryEntry {
             return Err(());
         }
 
+        let entries_buffer_pages = div_ceil(dir.sizel as usize, pmm::PAGE_SIZE as usize);
         let entries_buffer: *mut u8 = pmm::get()
-            .calloc(div_ceil(dir.sizel as usize, pmm::PAGE_SIZE as usize))
+            .calloc(entries_buffer_pages)
             .expect("Could not allocate the pages for the directory entries")
             .higher_half()
             .as_mut_ptr();
@@ -778,17 +760,11 @@ impl DirectoryEntry {
                     i += curr_entry.entry_size as u32;
                     continue;
                 }
-                serial::print!("empty space: {}, true size: {}\n", empty_space, true_size);
+
                 let new_entry = unsafe {
                     &mut *(entries_buffer.offset((i as usize + true_size) as isize)
                         as *mut DirectoryEntry)
                 };
-
-                for p in 0..10 {
-                    let byte =
-                        unsafe { *(entries_buffer.offset((i + true_size as u32 + p) as isize)) };
-                    serial::print!("{:#x} ", byte);
-                }
 
                 curr_entry.entry_size = true_size as u16;
                 new_entry.name_length = name.len() as u8;
@@ -802,23 +778,22 @@ impl DirectoryEntry {
                         .as_mut_ptr()
                         .copy_from(name.as_ptr(), name.len());
                 }
-                //TODO: this isnt working
-                serial::print!("curr entry: {:?}\n", curr_entry);
-                serial::print!("new entry: {:?}\n", new_entry);
 
                 dir.write(0, dir.sizel as usize, entries_buffer).unwrap();
 
+                pmm::get().free(entries_buffer, entries_buffer_pages);
                 return Ok(());
             }
 
             i += curr_entry.entry_size as u32;
         }
 
+        pmm::get().free(entries_buffer, entries_buffer_pages);
         Err(())
     }
 }
 
-struct Ext2Filesystem {
+pub struct Ext2Filesystem {
     superblock: Box<Superblock>,
     block_size: usize,
     block_group_cnt: usize,
@@ -877,17 +852,32 @@ impl Ext2Filesystem {
         None
     }
 
-    pub fn open(&self, raw_path: &str, flags: vfs::Flags, mode: vfs::Mode) -> Option<Box<Inode>> {
-        serial::print!("===============at open==============\n");
+    pub fn new_fd(&self, inode: Box<Inode>, flags: vfs::Flags) -> Option<vfs::FileDescription> {
+        for (i, slot) in unsafe { INODE_TABLE.iter().enumerate() } {
+            match slot {
+                Some(_) => {
+                    continue;
+                }
+                None => unsafe {
+                    INODE_TABLE[i] = Some(inode);
+                    let fd = vfs::FileDescription::new(i, flags, EXT2_FS.as_ref().unwrap().deref());
+                    return Some(fd);
+                },
+            }
+        }
+
+        None
+    }
+}
+
+impl vfs::Filesystem for Ext2Filesystem {
+    fn open(&self, path: &str, flags: vfs::Flags, mode: vfs::Mode) -> Option<vfs::FileDescription> {
+        serial::print!("open path: {}\n", path);
         let root_dir = Inode::get(ROOT_DIR_INODE);
         let mut current_dir = root_dir;
-        let path: Vec<&str> = raw_path.split('/').collect();
+        let path: Vec<&str> = path.split('/').collect();
         serial::print!("path vector: {:?}\n", path);
-        if path[0] != "" {
-            // relative path, not supported yet
-            return None;
-        }
-        serial::print!("here\n");
+
         // TODO: some more testing
         for (i, path_fragment) in path.iter().enumerate() {
             if *path_fragment == "" {
@@ -898,7 +888,7 @@ impl Ext2Filesystem {
                 let entry_inode = Inode::get(inode_addr);
 
                 if i + 1 == path.len() {
-                    return Some(entry_inode);
+                    return self.new_fd(entry_inode, flags);
                 }
 
                 if !entry_inode.is_directory() {
@@ -920,7 +910,7 @@ impl Ext2Filesystem {
                     DirectoryEntry::add_entry(&mut current_dir, new_inode_addr, path_fragment)
                         .unwrap();
 
-                    return Some(new_inode);
+                    return self.new_fd(new_inode, flags);
                 }
 
                 return None;
@@ -928,6 +918,32 @@ impl Ext2Filesystem {
         }
 
         None
+    }
+
+    fn mkdir(&self, path: &str, mode: vfs::Mode) -> Option<vfs::FileDescription> {
+        todo!()
+    }
+
+    fn read(&self, index: usize, buffer: *mut u8, cnt: usize, offset: usize) -> usize {
+        let inode_option = unsafe { INODE_TABLE[index].as_ref() };
+
+        if let Some(inode) = inode_option {
+            inode.read(offset, cnt, buffer).unwrap()
+        } else {
+            //TODO: report the error somehow
+            0
+        }
+    }
+
+    fn write(&self, index: usize, buffer: *const u8, cnt: usize, offset: usize) -> usize {
+        let inode_option = unsafe { INODE_TABLE[index].as_mut() };
+
+        if let Some(inode) = inode_option {
+            inode.write(offset, cnt, buffer).unwrap()
+        } else {
+            //TODO: report the error somehow
+            0
+        }
     }
 }
 
@@ -960,38 +976,11 @@ pub fn try_and_init(starting_lba: u64) -> Result<(), ()> {
     );
 
     unsafe { EXT2_FS = Some(Arc::new(Ext2Filesystem::new(starting_lba, superblock))) };
-    unsafe {
-        let fs = EXT2_FS.clone().unwrap();
-        let mut root_dir = Inode::get(ROOT_DIR_INODE);
-        // let liminecfg = fs.open("/home/limine.cfg").unwrap();
-        // serial::print!("limine.cfg: {:?}\n", liminecfg);
-        // let linkerld = fs.open("/linker.ld").unwrap();
-        // serial::print!("linker.ld: {:?}\n", linkerld);
-
-        // let mut bgd = BlockGroup::get(0);
-        // serial::print!("========== GOT HERE ==============\n");
-        // bgd.alloc_inode().unwrap();
-        // let new_inode = bgd.alloc_inode().unwrap();
-        // serial::print!("new inode: {}\n", new_inode);
-        // DirectoryEntry::add_entry(&mut root_dir, new_inode, "helloworld.txt").unwrap();
-        // let mut hw = Inode::get(new_inode);
-        // hw.type_and_permissions = 0x81ed;
-        // hw.ref_cnt = 1;
-        // hw.last_access_time = 0xdeadbeef;
-        // hw.creation_time = 1642615168;
-        // hw.last_mod_time = 1642615168;
-        // hw.gen_num = 3683931716;
-        // hw.flush();
-        // serial::print!("got hw inode\n");
-        // let buffer: *mut u8 = pmm::get().calloc(1).unwrap().higher_half().as_mut_ptr();
-        // liminecfg.read(0, liminecfg.sizel as usize, buffer);
-        // serial::print!("read from limine.cfg\n");
-        // hw.write(0, liminecfg.sizel as usize, buffer);
-        // serial::print!("wrote to helloworld.txt\n");
-        // serial::print!("hw struct: {:?}\n", hw);
-
-        fs.open("/home/test.txt", vfs::Flags::O_CREAT, vfs::Mode::empty());
-        fs.open("/home/hello.txt", vfs::Flags::O_CREAT, vfs::Mode::empty());
-    }
     Ok(())
+}
+
+pub fn get() -> &'static mut Ext2Filesystem {
+    unsafe {
+        &mut *(EXT2_FS.as_ref().unwrap().deref() as *const Ext2Filesystem as *mut Ext2Filesystem)
+    }
 }

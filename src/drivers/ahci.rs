@@ -1,7 +1,7 @@
 use core::intrinsics::size_of;
 
-use crate::arch::x86_64::mm::pmm::{self, PhysAddr};
-use crate::arch::x86_64::{io::Mmio, pci};
+use crate::arch::mm::pmm::{self, PhysAddr};
+use crate::arch::{io::Mmio, pci};
 use crate::mm::vmm::{self, PageFlags, VirtAddr};
 use crate::serial;
 use crate::utils::math::div_ceil;
