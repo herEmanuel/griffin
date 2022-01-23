@@ -85,6 +85,7 @@ pub fn start() {
 #[repr(u32)]
 pub enum MsrList {
     ApicBase = 0x1b,
+    GsBase = 0xc0000101,
 }
 
 pub fn rdmsr(msr: MsrList) -> u64 {
@@ -109,5 +110,11 @@ pub fn halt() -> ! {
         loop {
             asm!("hlt");
         }
+    }
+}
+
+pub fn sti() {
+    unsafe {
+        asm!("sti");
     }
 }

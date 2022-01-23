@@ -1,5 +1,5 @@
 use super::vfs;
-use crate::arch::mm::pmm;
+use crate::arch::mm::pmm::PmmBox;
 use crate::utils::math::{div_ceil, round_up};
 use crate::{drivers::ahci, serial, utils::bitmap};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
@@ -155,12 +155,7 @@ impl BlockGroup {
 
         let fs = unsafe { EXT2_FS.clone().unwrap() };
 
-        let block_bitmap_pages = div_ceil(fs.block_size, pmm::PAGE_SIZE as usize);
-        let block_bitmap: *mut u8 = pmm::get()
-            .calloc(block_bitmap_pages)
-            .expect("Could not allocate the pages for the block bitmap")
-            .higher_half()
-            .as_mut_ptr();
+        let block_bitmap = PmmBox::<u8>::new(fs.block_size).as_mut_ptr();
 
         ahci::read(
             0,
@@ -189,7 +184,6 @@ impl BlockGroup {
         }
 
         if allocated != block_cnt {
-            pmm::get().free(block_bitmap, block_bitmap_pages);
             return None;
         }
 
@@ -203,8 +197,6 @@ impl BlockGroup {
 
         self.flush();
 
-        pmm::get().free(block_bitmap, block_bitmap_pages);
-
         Some(blocks)
     }
 
@@ -215,12 +207,7 @@ impl BlockGroup {
 
         let fs = unsafe { EXT2_FS.clone().unwrap() };
 
-        let inode_bitmap_pages = div_ceil(fs.block_size, pmm::PAGE_SIZE as usize);
-        let inode_bitmap: *mut u8 = pmm::get()
-            .calloc(inode_bitmap_pages)
-            .expect("Could not allocate the pages for the inode bitmap")
-            .higher_half()
-            .as_mut_ptr();
+        let inode_bitmap = PmmBox::<u8>::new(fs.block_size).as_mut_ptr();
 
         ahci::read(
             0,
@@ -247,7 +234,6 @@ impl BlockGroup {
 
                     self.flush();
 
-                    pmm::get().free(inode_bitmap, inode_bitmap_pages);
                     return Some(
                         (i + 1 + self.index * fs.superblock.inodes_per_group as usize) as u32,
                     );
@@ -255,7 +241,6 @@ impl BlockGroup {
             }
         }
 
-        pmm::get().free(inode_bitmap, inode_bitmap_pages);
         None
     }
 }
@@ -684,12 +669,7 @@ impl DirectoryEntry {
         }
 
         // just try to search a big directory and we will have some serious troubles
-        let entries_buffer_pages = div_ceil(inode.sizel as usize, pmm::PAGE_SIZE as usize);
-        let entries_buffer: *mut u8 = pmm::get()
-            .calloc(entries_buffer_pages)
-            .expect("Could not allocate the pages for the directory entries")
-            .higher_half()
-            .as_mut_ptr();
+        let entries_buffer = PmmBox::<u8>::new(inode.sizel as usize).as_mut_ptr();
 
         inode.read(0, inode.sizel as usize, entries_buffer).unwrap();
 
@@ -712,12 +692,10 @@ impl DirectoryEntry {
             };
 
             if entry_name == name.as_bytes() {
-                pmm::get().free(entries_buffer, entries_buffer_pages);
                 return Some(curr_entry.inode);
             }
         }
 
-        pmm::get().free(entries_buffer, entries_buffer_pages);
         None
     }
 
@@ -726,12 +704,7 @@ impl DirectoryEntry {
             return Err(());
         }
 
-        let entries_buffer_pages = div_ceil(dir.sizel as usize, pmm::PAGE_SIZE as usize);
-        let entries_buffer: *mut u8 = pmm::get()
-            .calloc(entries_buffer_pages)
-            .expect("Could not allocate the pages for the directory entries")
-            .higher_half()
-            .as_mut_ptr();
+        let entries_buffer = PmmBox::<u8>::new(dir.sizel as usize).as_mut_ptr();
 
         dir.read(0, dir.sizel as usize, entries_buffer).unwrap();
 
@@ -781,14 +754,12 @@ impl DirectoryEntry {
 
                 dir.write(0, dir.sizel as usize, entries_buffer).unwrap();
 
-                pmm::get().free(entries_buffer, entries_buffer_pages);
                 return Ok(());
             }
 
             i += curr_entry.entry_size as u32;
         }
 
-        pmm::get().free(entries_buffer, entries_buffer_pages);
         Err(())
     }
 }

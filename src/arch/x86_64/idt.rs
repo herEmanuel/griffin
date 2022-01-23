@@ -1,3 +1,4 @@
+use super::apic;
 use super::cpu;
 use crate::serial;
 
@@ -125,5 +126,5 @@ isr!(invalid_opcode, {
 
 isr!(timer, {
     serial::print!("timer!!!\n");
-    cpu::halt();
+    apic::get().eoi();
 });

@@ -1,6 +1,7 @@
 use crate::serial;
 use crate::spinlock::Spinlock;
-use crate::utils::bitmap;
+use crate::utils::{bitmap, math::div_ceil};
+use core::ops::{Deref, DerefMut};
 use core::ptr::null_mut;
 use stivale_boot::v2::{StivaleMemoryMapEntry, StivaleMemoryMapEntryType};
 
@@ -38,6 +39,55 @@ impl PhysAddr {
 
     pub fn as_u64(self) -> u64 {
         self.0
+    }
+}
+
+pub struct PmmBox<T> {
+    data: *mut T,
+    page_cnt: usize,
+}
+
+impl<T> PmmBox<T> {
+    pub fn new(size: usize) -> Self {
+        let alloc_size = div_ceil(size, PAGE_SIZE as usize);
+        let mem: *mut T = get()
+            .calloc(alloc_size)
+            .expect("PmmBox: could not allocate the pages needed")
+            .higher_half()
+            .as_mut_ptr();
+
+        PmmBox {
+            data: mem,
+            page_cnt: alloc_size,
+        }
+    }
+
+    pub fn as_ptr(&self) -> *const T {
+        self.data
+    }
+
+    pub fn as_mut_ptr(&self) -> *mut T {
+        self.data
+    }
+}
+
+impl<T> Deref for PmmBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.data }
+    }
+}
+
+impl<T> DerefMut for PmmBox<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.data }
+    }
+}
+
+impl<T> Drop for PmmBox<T> {
+    fn drop(&mut self) {
+        get().free(self.data as *mut u8, self.page_cnt);
     }
 }
 

@@ -32,15 +32,15 @@ bitflags::bitflags! {
     }
 }
 
-pub struct FileDescription<'a> {
+pub struct FileDescription {
     flags: Flags,
     offset: usize,
-    fs: &'a dyn Filesystem,
+    fs: &'static dyn Filesystem,
     pub file_index: usize, // an index for the filesystem-specific table of open files
 }
 
-impl<'a> FileDescription<'a> {
-    pub fn new(index: usize, flags: Flags, fs: &'a dyn Filesystem) -> Self {
+impl FileDescription {
+    pub fn new(index: usize, flags: Flags, fs: &'static dyn Filesystem) -> Self {
         FileDescription {
             flags,
             offset: 0,

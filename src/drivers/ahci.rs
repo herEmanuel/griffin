@@ -1,6 +1,6 @@
 use core::intrinsics::size_of;
 
-use crate::arch::mm::pmm::{self, PhysAddr};
+use crate::arch::mm::pmm::{self, PhysAddr, PmmBox};
 use crate::arch::{io::Mmio, pci};
 use crate::mm::vmm::{self, PageFlags, VirtAddr};
 use crate::serial;
@@ -285,9 +285,6 @@ pub fn init(hba: &pci::PciDevice) {
                 unsafe {
                     let device = AhciDevice::new(port);
                     serial::print!("Initialized ahci driver\n");
-                    let mut mem: *mut u8 = pmm::get().calloc(1).unwrap().as_mut_ptr();
-                    device.regs.send_command(2, 1, mem, false);
-                    serial::print!("ahci access result: {:#x}\n", *(mem as *mut u64));
                     AHCI_DEVICES.push(device);
                 }
             }
@@ -297,11 +294,7 @@ pub fn init(hba: &pci::PciDevice) {
 
 pub fn read(device_index: usize, offset: u64, bytes: usize, buffer: *mut u8) -> Result<usize, ()> {
     let device = unsafe { &AHCI_DEVICES[device_index] };
-    let tmp_buffer: *mut u8 = pmm::get()
-        .calloc(div_ceil(bytes, pmm::PAGE_SIZE as usize))
-        .expect("[AHCI] could not allocate temp buffer")
-        .higher_half()
-        .as_mut_ptr();
+    let tmp_buffer = PmmBox::<u8>::new(bytes).as_mut_ptr();
 
     /*
         bytes + (offset % 512) will make sure than unaligned reads that span more than one sector
@@ -334,11 +327,7 @@ pub fn write(
     buffer: *const u8,
 ) -> Result<usize, ()> {
     let device = unsafe { &AHCI_DEVICES[device_index] };
-    let tmp_buffer: *mut u8 = pmm::get()
-        .calloc(div_ceil(bytes, pmm::PAGE_SIZE as usize))
-        .expect("[AHCI] could not allocate temp buffer")
-        .higher_half()
-        .as_mut_ptr();
+    let tmp_buffer = PmmBox::<u8>::new(bytes).as_mut_ptr();
 
     let sectors = div_ceil(bytes + (offset % 512) as usize, 512) as u16;
 

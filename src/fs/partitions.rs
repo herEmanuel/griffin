@@ -1,5 +1,5 @@
 use super::ext2;
-use crate::arch::mm::pmm;
+use crate::arch::mm::pmm::{self, PmmBox};
 use crate::drivers::ahci;
 use crate::serial;
 use crate::utils::math::div_ceil;
@@ -62,14 +62,10 @@ pub fn scan() -> Result<(), ()> {
         gpt_header.last_usable
     );
 
-    let gpt_entries: *mut GptPartitionEntry = pmm::get()
-        .calloc(div_ceil(
-            gpt_header.partition_entries as usize * size_of::<GptPartitionEntry>(),
-            pmm::PAGE_SIZE as usize,
-        ))
-        .expect("Could not allocate the pages for the GPT entries")
-        .higher_half()
-        .as_mut_ptr();
+    let gpt_entries = PmmBox::<GptPartitionEntry>::new(
+        gpt_header.partition_entries as usize * size_of::<GptPartitionEntry>(),
+    )
+    .as_mut_ptr();
 
     ahci::read(
         0,

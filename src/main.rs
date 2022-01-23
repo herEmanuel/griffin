@@ -21,6 +21,7 @@ pub mod arch;
 pub mod drivers;
 pub mod fs;
 pub mod mm;
+pub mod proc;
 pub mod serial;
 pub mod spinlock;
 pub mod utils;

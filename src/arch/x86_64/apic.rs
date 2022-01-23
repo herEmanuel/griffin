@@ -1,4 +1,5 @@
 use super::cpu;
+use super::io::outb;
 use super::mm::pmm;
 use crate::drivers::hpet;
 use crate::mm::vmm::{self, PageFlags};
@@ -25,7 +26,7 @@ pub struct Xapic {
 impl Xapic {
     pub fn new() -> Self {
         Xapic {
-            address: cpu::rdmsr(cpu::MsrList::ApicBase) + pmm::PHYS_BASE,
+            address: (cpu::rdmsr(cpu::MsrList::ApicBase) & 0xfffff000) + pmm::PHYS_BASE,
         }
     }
 
@@ -37,7 +38,6 @@ impl Xapic {
     }
 
     pub fn read(&self, reg: LapicRegisters) -> u32 {
-        serial::print!("addr: {:#x}\n", self.address + reg as u64);
         unsafe { *((self.address + reg as u64) as *const u32) }
     }
 
@@ -62,6 +62,11 @@ impl Xapic {
 }
 
 pub fn init() {
+    unsafe {
+        remap_pic();
+    }
+    cpu::sti();
+
     let xapic = Xapic::new();
 
     vmm::get().map_page(
@@ -71,15 +76,31 @@ pub fn init() {
         true,
     );
 
+    xapic.enable();
+
     unsafe {
         LAPIC = Some(xapic);
-        LAPIC.unwrap().enable();
-        let sivr = LAPIC.unwrap().read(LapicRegisters::Sivr);
-        serial::print!("address: {:#x}\n", LAPIC.unwrap().address);
-        serial::print!("sivr: {:#x}\n", sivr);
     }
 }
 
 pub fn get() -> Xapic {
     unsafe { LAPIC.expect("The Lapic hasn't been initialized") }
+}
+
+pub unsafe fn remap_pic() {
+    outb(0x20, 0x11);
+    outb(0xA0, 0x11);
+
+    outb(0x21, 0x20);
+    outb(0xA1, 0x28);
+
+    outb(0x21, 4); //master's irq2
+    outb(0xA1, 2); //slave's irq9
+
+    outb(0x21, 0x01);
+    outb(0xA1, 0x01);
+
+    //sets the mask for each PIC
+    outb(0x21, 0xFF); //0xFF disables all hardware interrupts
+    outb(0xA1, 0xFF);
 }
