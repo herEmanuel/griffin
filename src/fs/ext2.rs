@@ -155,30 +155,28 @@ impl BlockGroup {
 
         let fs = unsafe { EXT2_FS.clone().unwrap() };
 
-        let block_bitmap = PmmBox::<u8>::new(fs.block_size).as_mut_ptr();
+        let mut block_bitmap = bitmap::Bitmap::new(fs.block_size);
 
         ahci::read(
             0,
             (fs.starting_lba * 512 + self.raw.block_bitmap as usize * fs.block_size) as u64,
             fs.block_size,
-            block_bitmap,
+            block_bitmap.as_mut_ptr(),
         )
         .unwrap();
 
         let mut allocated = 0;
         let mut blocks = Vec::new();
         for i in 0..fs.block_size * 8 {
-            unsafe {
-                if bitmap::bit_at(block_bitmap, i) == 0 {
-                    bitmap::set_bit(block_bitmap, i);
-                    blocks.push(i as u32 + self.index as u32 * fs.superblock.blocks_per_group);
-                    allocated += 1;
+            if !block_bitmap.is_set(i) {
+                block_bitmap.set(i);
+                blocks.push(i as u32 + self.index as u32 * fs.superblock.blocks_per_group);
+                allocated += 1;
 
-                    self.raw.unallocated_blocks -= 1;
+                self.raw.unallocated_blocks -= 1;
 
-                    if allocated == block_cnt {
-                        break;
-                    }
+                if allocated == block_cnt {
+                    break;
                 }
             }
         }
@@ -191,7 +189,7 @@ impl BlockGroup {
             0,
             (fs.starting_lba * 512 + self.raw.block_bitmap as usize * fs.block_size) as u64,
             fs.block_size,
-            block_bitmap,
+            block_bitmap.as_ptr(),
         )
         .unwrap();
 
@@ -207,37 +205,32 @@ impl BlockGroup {
 
         let fs = unsafe { EXT2_FS.clone().unwrap() };
 
-        let inode_bitmap = PmmBox::<u8>::new(fs.block_size).as_mut_ptr();
+        let mut inode_bitmap = bitmap::Bitmap::new(fs.block_size);
 
         ahci::read(
             0,
             (fs.starting_lba * 512 + self.raw.inode_bitmap as usize * fs.block_size) as u64,
             fs.block_size,
-            inode_bitmap,
+            inode_bitmap.as_mut_ptr(),
         )
         .unwrap();
 
         for i in 0..fs.block_size * 8 {
-            unsafe {
-                if bitmap::bit_at(inode_bitmap, i) == 0 {
-                    bitmap::set_bit(inode_bitmap, i);
-                    self.raw.unallocated_inodes -= 1;
+            if !inode_bitmap.is_set(i) {
+                inode_bitmap.set(i);
+                self.raw.unallocated_inodes -= 1;
 
-                    ahci::write(
-                        0,
-                        (fs.starting_lba * 512 + self.raw.inode_bitmap as usize * fs.block_size)
-                            as u64,
-                        fs.block_size,
-                        inode_bitmap,
-                    )
-                    .unwrap();
+                ahci::write(
+                    0,
+                    (fs.starting_lba * 512 + self.raw.inode_bitmap as usize * fs.block_size) as u64,
+                    fs.block_size,
+                    inode_bitmap.as_ptr(),
+                )
+                .unwrap();
 
-                    self.flush();
+                self.flush();
 
-                    return Some(
-                        (i + 1 + self.index * fs.superblock.inodes_per_group as usize) as u32,
-                    );
-                }
+                return Some((i + 1 + self.index * fs.superblock.inodes_per_group as usize) as u32);
             }
         }
 
@@ -669,14 +662,17 @@ impl DirectoryEntry {
         }
 
         // just try to search a big directory and we will have some serious troubles
-        let entries_buffer = PmmBox::<u8>::new(inode.sizel as usize).as_mut_ptr();
+        let entries_buffer = PmmBox::<u8>::new(inode.sizel as usize);
+        let entries_buffer_ptr = entries_buffer.as_mut_ptr();
 
-        inode.read(0, inode.sizel as usize, entries_buffer).unwrap();
+        inode
+            .read(0, inode.sizel as usize, entries_buffer_ptr)
+            .unwrap();
 
         let mut i = 0;
         while i < inode.sizel {
             let curr_entry =
-                unsafe { &*(entries_buffer.offset(i as isize) as *mut DirectoryEntry) };
+                unsafe { &*(entries_buffer_ptr.offset(i as isize) as *mut DirectoryEntry) };
 
             i += curr_entry.entry_size as u32;
 
@@ -704,14 +700,15 @@ impl DirectoryEntry {
             return Err(());
         }
 
-        let entries_buffer = PmmBox::<u8>::new(dir.sizel as usize).as_mut_ptr();
+        let entries_buffer = PmmBox::<u8>::new(dir.sizel as usize);
+        let entries_buffer_ptr = entries_buffer.as_mut_ptr();
 
-        dir.read(0, dir.sizel as usize, entries_buffer).unwrap();
+        dir.read(0, dir.sizel as usize, entries_buffer_ptr).unwrap();
 
         let mut i = 0;
         while i < dir.sizel {
             let curr_entry =
-                unsafe { &mut *(entries_buffer.offset(i as isize) as *mut DirectoryEntry) };
+                unsafe { &mut *(entries_buffer_ptr.offset(i as isize) as *mut DirectoryEntry) };
 
             let mut true_size = size_of::<DirectoryEntry>() + curr_entry.name_length as usize;
 
@@ -735,7 +732,7 @@ impl DirectoryEntry {
                 }
 
                 let new_entry = unsafe {
-                    &mut *(entries_buffer.offset((i as usize + true_size) as isize)
+                    &mut *(entries_buffer_ptr.offset((i as usize + true_size) as isize)
                         as *mut DirectoryEntry)
                 };
 
@@ -752,7 +749,8 @@ impl DirectoryEntry {
                         .copy_from(name.as_ptr(), name.len());
                 }
 
-                dir.write(0, dir.sizel as usize, entries_buffer).unwrap();
+                dir.write(0, dir.sizel as usize, entries_buffer_ptr)
+                    .unwrap();
 
                 return Ok(());
             }

@@ -25,6 +25,7 @@ struct GptHeader {
 }
 
 #[repr(C, packed)]
+#[derive(Debug)]
 struct GptPartitionEntry {
     pt_guid: [u64; 2],
     unique_guid: [u64; 2],
@@ -64,18 +65,18 @@ pub fn scan() -> Result<(), ()> {
 
     let gpt_entries = PmmBox::<GptPartitionEntry>::new(
         gpt_header.partition_entries as usize * size_of::<GptPartitionEntry>(),
-    )
-    .as_mut_ptr();
+    );
+    let gpt_entries_ptr = gpt_entries.as_mut_ptr();
 
     ahci::read(
         0,
         gpt_header.start_lba * 512,
         gpt_header.partition_entries as usize * size_of::<GptPartitionEntry>(),
-        gpt_entries as *mut u8,
+        gpt_entries_ptr as *mut u8,
     )?;
 
     for i in 0..gpt_header.partition_entries {
-        let entry = unsafe { &*gpt_entries.offset(i as isize) };
+        let entry = unsafe { &*gpt_entries_ptr.offset(i as isize) };
 
         if entry.pt_guid[0] == 0 {
             // unused entry

@@ -1,5 +1,3 @@
-use crate::serial;
-use crate::spinlock::Spinlock;
 use crate::utils::{bitmap, math::div_ceil};
 use core::ops::{Deref, DerefMut};
 use core::ptr::null_mut;
@@ -10,7 +8,7 @@ use stivale_boot::v2::{StivaleMemoryMapEntry, StivaleMemoryMapEntryType};
 pub const PAGE_SIZE: u64 = 4096;
 pub const PHYS_BASE: u64 = 0xffff800000000000;
 
-pub static mut PAGE_ALLOCATOR: Pmm = Pmm::new();
+pub static mut PAGE_ALLOCATOR: Option<Pmm> = None;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
@@ -91,38 +89,29 @@ impl<T> Drop for PmmBox<T> {
     }
 }
 
-pub struct Pmm {
-    bitmap: Spinlock<*mut u8>,
-    bitmap_size: u64,
-}
+pub struct Pmm(spin::Mutex<bitmap::Bitmap>);
 
 impl Pmm {
-    const fn new() -> Self {
-        Pmm {
-            bitmap: Spinlock::new(null_mut()),
-            bitmap_size: 0,
-        }
+    fn new(bitmap: bitmap::Bitmap) -> Self {
+        Pmm(spin::Mutex::new(bitmap))
     }
 
     pub fn alloc(&mut self, pages: usize) -> Option<PhysAddr> {
-        let bitmap = self.bitmap.lock();
+        let mut bitmap = self.0.lock();
         let mut count = 0;
 
-        for i in 0..self.bitmap_size * 8 {
-            if unsafe { *bitmap.offset((i / 8) as isize) } & (1 << (7 - i % 8)) != 0 {
+        for i in 0..bitmap.size() * 8 {
+            if bitmap.is_set(i) {
                 count += 1;
 
                 if count == pages {
-                    let page = i - pages as u64 + 1;
+                    let page = i - pages + 1;
 
-                    for p in page..page + pages as u64 {
-                        unsafe {
-                            *bitmap.offset((p / 8) as isize) &= !(1 << (7 - p % 8));
-                        }
+                    for p in page..page + pages {
+                        bitmap.clear(p);
                     }
 
-                    self.bitmap.unlock();
-                    return Some(PhysAddr::new(page * PAGE_SIZE));
+                    return Some(PhysAddr::new(page as u64 * PAGE_SIZE));
                 }
 
                 continue;
@@ -131,7 +120,6 @@ impl Pmm {
             count = 0;
         }
 
-        self.bitmap.unlock();
         None
     }
 
@@ -149,20 +137,18 @@ impl Pmm {
 
     pub fn free(&mut self, ptr: *mut u8, pages_amnt: usize) {
         let page = (ptr as u64 & !PHYS_BASE) / PAGE_SIZE;
-        let bitmap = *self.bitmap.lock();
+        let mut bitmap = self.0.lock();
 
         for i in page..(page + pages_amnt as u64) {
-            unsafe {
-                bitmap::set_bit(bitmap, i as usize);
-            }
+            bitmap.set(i as usize);
         }
-
-        self.bitmap.unlock();
     }
 }
 
 pub unsafe fn init(entries: *const StivaleMemoryMapEntry, entries_num: u64) {
     let mut biggest = 0;
+    let mut bitmap_ptr = null_mut();
+    let mut bitmap;
 
     for i in 0..entries_num {
         let entry = &*(entries.offset(i as isize));
@@ -181,11 +167,10 @@ pub unsafe fn init(entries: *const StivaleMemoryMapEntry, entries_num: u64) {
             biggest = peak;
         }
     }
-    serial::print!("got biggest\n");
-    PAGE_ALLOCATOR.bitmap_size = (biggest / PAGE_SIZE) / 8; // wasting some pages here
+
+    let bitmap_size = div_ceil((biggest / PAGE_SIZE) as usize, 8) as u64;
 
     for i in 0..entries_num {
-        serial::print!("loop\n");
         let entry = &mut *(entries.offset(i as isize) as *mut StivaleMemoryMapEntry);
 
         match entry.entry_type {
@@ -196,22 +181,24 @@ pub unsafe fn init(entries: *const StivaleMemoryMapEntry, entries_num: u64) {
             }
         }
 
-        if entry.length < PAGE_ALLOCATOR.bitmap_size {
+        if entry.length < bitmap_size {
             continue;
         }
 
-        let bitmap = PAGE_ALLOCATOR.bitmap.lock();
+        bitmap_ptr = (entry.base + PHYS_BASE) as *mut u8;
+        bitmap_ptr.write_bytes(0, bitmap_size as usize);
 
-        *bitmap = (entry.base + PHYS_BASE) as *mut u8;
-        bitmap.write_bytes(0, PAGE_ALLOCATOR.bitmap_size as usize);
-
-        PAGE_ALLOCATOR.bitmap.unlock();
-
-        entry.base += PAGE_ALLOCATOR.bitmap_size;
-        entry.length -= PAGE_ALLOCATOR.bitmap_size;
+        entry.base += bitmap_size;
+        entry.length -= bitmap_size;
         break;
     }
-    serial::print!("allocated bitmap memory\n");
+
+    if bitmap_ptr.is_null() {
+        panic!("[PMM] Could not allocate the memory needed for the bitmap");
+    }
+
+    bitmap = bitmap::Bitmap::from_raw_ptr(bitmap_ptr, bitmap_size as usize);
+
     for i in 0..entries_num {
         let entry = &*(entries.offset(i as isize));
 
@@ -225,17 +212,19 @@ pub unsafe fn init(entries: *const StivaleMemoryMapEntry, entries_num: u64) {
 
         let page = entry.base / PAGE_SIZE;
         let length = entry.length / PAGE_SIZE;
-        let bitmap = PAGE_ALLOCATOR.bitmap.lock();
 
         for p in page..page + length {
-            *bitmap.offset((p / 8) as isize) |= 1 << (7 - p % 8);
+            bitmap.set(p as usize);
         }
-
-        PAGE_ALLOCATOR.bitmap.unlock();
     }
-    serial::print!("initialized the bitmap\n");
+
+    PAGE_ALLOCATOR = Some(Pmm::new(bitmap));
 }
 
 pub fn get() -> &'static mut Pmm {
-    unsafe { &mut PAGE_ALLOCATOR }
+    unsafe {
+        PAGE_ALLOCATOR
+            .as_mut()
+            .expect("The Pmm hasn't been initialized")
+    }
 }

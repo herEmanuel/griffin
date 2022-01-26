@@ -6,7 +6,6 @@
 
 use crate::arch::mm::pmm;
 use crate::serial;
-use crate::spinlock::Spinlock;
 use crate::utils::{bitmap, math};
 use core::alloc::GlobalAlloc;
 use core::mem::size_of;
@@ -97,7 +96,7 @@ struct Slab {
     free_objs: usize,
     object_size: usize,
     data: *mut u8,
-    bitmap: Spinlock<bitmap::Bitmap<{ OBJS_PER_SLAB / 8 }>>,
+    bitmap: spin::Mutex<bitmap::Bitmap>,
     next: *mut Slab,
     previous: *mut Slab,
 }
@@ -114,6 +113,7 @@ impl Slab {
 
         slab.free_objs = OBJS_PER_SLAB;
         slab.object_size = parent.object_size;
+        slab.bitmap = spin::Mutex::new(bitmap::Bitmap::new(pmm::PAGE_SIZE as usize));
         slab.next = parent.slabs;
         slab.previous = null_mut();
         parent.slabs = slab;
@@ -129,29 +129,26 @@ impl Slab {
             return null_mut();
         }
 
-        let bitmap = self.bitmap.lock();
+        let mut bitmap = self.bitmap.lock();
 
         for i in 0..OBJS_PER_SLAB {
-            if bitmap.bit_at(i) == 0 {
-                bitmap.set_bit(i);
+            if !bitmap.is_set(i) {
+                bitmap.set(i);
                 self.free_objs -= 1;
 
-                self.bitmap.unlock();
                 return self.data.offset((i * self.object_size) as isize);
             }
         }
 
-        self.bitmap.unlock();
         null_mut() // should never get here
     }
 
     unsafe fn dealloc(&mut self, ptr: *mut u8) {
         let bit = (ptr as usize - self.data as usize) / self.object_size;
-        let bitmap = self.bitmap.lock();
+        let mut bitmap = self.bitmap.lock();
 
         self.free_objs += 1;
-        bitmap.clear_bit(bit);
-        self.bitmap.unlock();
+        bitmap.clear(bit);
     }
 }
 
