@@ -1,7 +1,7 @@
 use core::intrinsics::size_of;
 
 use crate::arch::mm::pmm::{self, PhysAddr, PmmBox};
-use crate::arch::{io::Mmio, pci};
+use crate::arch::{idt, io::Mmio, pci};
 use crate::mm::vmm::{self, PageFlags, VirtAddr};
 use crate::serial;
 use crate::utils::math::div_ceil;
@@ -231,6 +231,12 @@ struct AhciDevice {
 impl AhciDevice {
     // we use the clb and fb provided by the firmware
     unsafe fn new(regs: &'static mut PortRegisters) -> Self {
+        /*
+            get an interrupt once we receive a device to host FIS,
+            which should indicate that a transfer has been completed
+        */
+        regs.interrupt_enable.set(regs.interrupt_enable.get() | 1);
+
         for i in 0..32 {
             let cmd_header = regs.get_command_header(i);
 
@@ -279,6 +285,14 @@ pub fn init(hba: &pci::PciDevice) {
         return;
     }
 
+    hba_mem.ghc.set(hba_mem.ghc.get() | 2); // enable interrupts
+
+    let vector = idt::alloc_vector().expect("[AHCI] Could not allocate an interrupt vector");
+    unsafe {
+        idt::register_isr(vector, ahci_isr as u64, 0, 0x8e);
+    }
+    hba.set_msi(vector);
+
     for (i, port) in hba_mem.ports.iter_mut().enumerate() {
         if hba_mem.port_implemented.get() & (1 << i) != 0 {
             if port.signature.get() == SATA_ATA {
@@ -294,7 +308,8 @@ pub fn init(hba: &pci::PciDevice) {
 
 pub fn read(device_index: usize, offset: u64, bytes: usize, buffer: *mut u8) -> Result<usize, ()> {
     let device = unsafe { &AHCI_DEVICES[device_index] };
-    let tmp_buffer = PmmBox::<u8>::new(bytes).as_mut_ptr();
+    let tmp_buffer = PmmBox::<u8>::new(bytes);
+    let tmp_buffer_ptr = tmp_buffer.as_mut_ptr();
 
     /*
         bytes + (offset % 512) will make sure than unaligned reads that span more than one sector
@@ -307,11 +322,11 @@ pub fn read(device_index: usize, offset: u64, bytes: usize, buffer: *mut u8) -> 
 
     let access_result = device
         .regs
-        .send_command(offset / 512, sectors, tmp_buffer, false);
+        .send_command(offset / 512, sectors, tmp_buffer_ptr, false);
 
     if let Ok(bc) = access_result {
         unsafe {
-            buffer.copy_from(tmp_buffer.offset((offset % 512) as isize), bytes);
+            buffer.copy_from(tmp_buffer_ptr.offset((offset % 512) as isize), bytes);
         }
 
         Ok(bc)
@@ -327,27 +342,32 @@ pub fn write(
     buffer: *const u8,
 ) -> Result<usize, ()> {
     let device = unsafe { &AHCI_DEVICES[device_index] };
-    let tmp_buffer = PmmBox::<u8>::new(bytes).as_mut_ptr();
+    let tmp_buffer = PmmBox::<u8>::new(bytes);
+    let tmp_buffer_ptr = tmp_buffer.as_mut_ptr();
 
     let sectors = div_ceil(bytes + (offset % 512) as usize, 512) as u16;
 
     let mut access_result = device
         .regs
-        .send_command(offset / 512, sectors, tmp_buffer, false);
+        .send_command(offset / 512, sectors, tmp_buffer_ptr, false);
 
     if let Ok(_) = access_result {
         unsafe {
-            tmp_buffer
+            tmp_buffer_ptr
                 .offset((offset % 512) as isize)
                 .copy_from(buffer, bytes);
         }
 
         access_result = device
             .regs
-            .send_command(offset / 512, sectors, tmp_buffer, true);
+            .send_command(offset / 512, sectors, tmp_buffer_ptr, true);
 
         access_result
     } else {
         access_result
     }
 }
+
+idt::isr!(ahci_isr, |_stack| {
+    serial::print!("=== Disk transfer completed ===\n");
+});
