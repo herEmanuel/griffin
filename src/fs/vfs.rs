@@ -33,9 +33,9 @@ bitflags::bitflags! {
 }
 
 pub struct FileDescription {
-    flags: Flags,
-    offset: usize,
-    fs: &'static dyn Filesystem,
+    pub flags: Flags,
+    pub offset: usize,
+    pub fs: &'static dyn Filesystem,
     pub file_index: usize, // an index for the filesystem-specific table of open files
 }
 
@@ -140,10 +140,22 @@ pub fn mkdir(path: &str, mode: Mode) -> Option<FileDescription> {
     }
 }
 
-pub fn read(fd: FileDescription, buffer: *mut u8, cnt: usize) -> usize {
-    fd.fs.read(fd.file_index, buffer, cnt, fd.offset)
+pub fn read(
+    fs: &dyn Filesystem,
+    file_index: usize,
+    buffer: *mut u8,
+    cnt: usize,
+    offset: usize,
+) -> usize {
+    fs.read(file_index, buffer, cnt, offset)
 }
 
-pub fn write(fd: FileDescription, buffer: *const u8, cnt: usize) -> usize {
-    fd.fs.write(fd.file_index, buffer, cnt, fd.offset)
+pub fn write(
+    fs: &dyn Filesystem,
+    file_index: usize,
+    buffer: *const u8,
+    cnt: usize,
+    offset: usize,
+) -> usize {
+    fs.write(file_index, buffer, cnt, offset)
 }

@@ -54,31 +54,35 @@ extern "C" fn _start(_tags: usize) -> ! {
 
     video.print("Hello, world, from Rust!\n");
     video.print("Is everything fine?");
-
+    serial::print!("fuck off\n");
     unsafe {
         arch::gdt::init();
-        arch::idt::init();
-
+        arch::interrupts::init();
+        serial::print!("crap\n");
         arch::mm::pmm::init(
             &mmap_tag.entry_array as *const StivaleMemoryMapEntry,
             mmap_tag.entries_len,
         );
         serial::print!("pmm done yey\n");
-        vmm::init();
         slab::init();
+        vmm::init();
         arch::acpi::init(rsdp_tag);
     }
+
+    drivers::hpet::init();
+    arch::apic::init();
+    // arch::apic::get().calibrate_timer(1000);
 
     serial::print!("slab allocator running\n");
 
     arch::pci::enumerate_devices();
     partitions::scan();
     vfs::mount(unsafe { fs::ext2::get() }, "/");
-    let fd = vfs::open("/home/limine.cfg", vfs::Flags::empty(), vfs::Mode::empty()).unwrap();
+    let mut fd = vfs::open("/home/limine.cfg", vfs::Flags::empty(), vfs::Mode::empty()).unwrap();
     serial::print!("file index: {}\n", fd.file_index);
 
     let mut content = alloc::vec::Vec::with_capacity(50);
-    vfs::read(fd, content.as_mut_ptr(), 50);
+    vfs::read(fd.fs, fd.file_index, content.as_mut_ptr(), 50, fd.offset);
     unsafe {
         content.set_len(50);
     }
@@ -86,10 +90,6 @@ extern "C" fn _start(_tags: usize) -> ! {
         "res: {}\n",
         core::str::from_utf8(content.as_slice()).unwrap()
     );
-
-    drivers::hpet::init();
-    arch::apic::init();
-    arch::apic::get().calibrate_timer(1000);
 
     cpu::halt();
 }

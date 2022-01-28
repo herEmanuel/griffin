@@ -1,7 +1,7 @@
 use core::intrinsics::size_of;
 
 use crate::arch::mm::pmm::{self, PhysAddr, PmmBox};
-use crate::arch::{idt, io::Mmio, pci};
+use crate::arch::{interrupts, io::Mmio, pci};
 use crate::mm::vmm::{self, PageFlags, VirtAddr};
 use crate::serial;
 use crate::utils::math::div_ceil;
@@ -287,9 +287,9 @@ pub fn init(hba: &pci::PciDevice) {
 
     hba_mem.ghc.set(hba_mem.ghc.get() | 2); // enable interrupts
 
-    let vector = idt::alloc_vector().expect("[AHCI] Could not allocate an interrupt vector");
+    let vector = interrupts::alloc_vector().expect("[AHCI] Could not allocate an interrupt vector");
     unsafe {
-        idt::register_isr(vector, ahci_isr as u64, 0, 0x8e);
+        interrupts::register_isr(vector, ahci_isr as u64, 0, 0x8e);
     }
     hba.set_msi(vector);
 
@@ -368,6 +368,6 @@ pub fn write(
     }
 }
 
-idt::isr!(ahci_isr, |_stack| {
+interrupts::isr!(ahci_isr, |_stack| {
     serial::print!("=== Disk transfer completed ===\n");
 });

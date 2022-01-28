@@ -164,27 +164,25 @@ pub fn alloc_vector() -> Option<usize> {
 pub unsafe fn init() {
     register_isr(0x3, int3 as u64, 0, 0x8e);
     register_isr(0x6, invalid_opcode as u64, 0, 0x8e);
-    register_isr(0xE, page_fault as u64, 0, 0x8e);
 
     IDT_DESCRIPTOR.offset = &IDT as *const IdtGate as u64;
     asm!("lidt [{}]", in(reg) &IDT_DESCRIPTOR);
 }
 
+pub fn enable() {
+    unsafe {
+        asm!("sti");
+    }
+}
+
+pub fn disable() {
+    unsafe {
+        asm!("cli");
+    }
+}
+
 isr!(int3, |_stack| {
     serial::print!("Breakpoint yeeee\n");
-});
-
-isr_err!(page_fault, |_stack, error_code| {
-    serial::print!("Page fault\n");
-    serial::print!("Error code: {}\n", error_code);
-
-    let mut cr2: u64;
-    asm!("mov {}, cr2", out(reg) cr2);
-    serial::print!("CR2: {:#x}\n", cr2);
-
-    loop {
-        asm!("hlt");
-    }
 });
 
 isr!(invalid_opcode, |_stack| {

@@ -38,6 +38,11 @@ impl PhysAddr {
     pub fn as_u64(self) -> u64 {
         self.0
     }
+
+    // remove the page table bits that give information about the mapping
+    pub fn remove_flags(self) -> Self {
+        PhysAddr(self.0 & 0x000ffffffffff000)
+    }
 }
 
 pub struct PmmBox<T> {

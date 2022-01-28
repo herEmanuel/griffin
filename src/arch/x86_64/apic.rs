@@ -45,14 +45,14 @@ impl Xapic {
         unsafe { *((self.address + reg as u64) as *mut u32) = value }
     }
 
-    pub fn calibrate_timer(&self, ms: u64) {
+    pub fn calibrate_timer(&self, ms: u64, vector: usize) {
         self.write(LapicRegisters::Dcr, 0); // divide by two
         self.write(LapicRegisters::InitialCount, u32::MAX);
 
         hpet::sleep(ms);
 
         let count = u32::MAX - self.read(LapicRegisters::CurrCount);
-        self.write(LapicRegisters::LvtTimer, 0x20 | 1 << 17); // periodic mode
+        self.write(LapicRegisters::LvtTimer, vector as u32 | 1 << 17); // periodic mode
         self.write(LapicRegisters::InitialCount, count);
     }
 

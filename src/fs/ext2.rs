@@ -354,11 +354,7 @@ impl Inode {
             let count = if bytes_read + block_size <= bytes {
                 block_size
             } else {
-                if bytes < block_size {
-                    bytes
-                } else {
-                    bytes % bytes_read
-                }
+                bytes % block_size
             };
 
             ahci::read(
@@ -391,11 +387,7 @@ impl Inode {
             let count = if bytes_written + block_size <= bytes {
                 block_size
             } else {
-                if bytes < block_size {
-                    bytes
-                } else {
-                    bytes % bytes_written
-                }
+                bytes % block_size
             };
 
             ahci::write(
