@@ -1,4 +1,8 @@
-#[repr(C, packed)]
+use crate::arch::{gdt, mm::pmm};
+use crate::serial;
+use alloc::boxed::Box;
+
+#[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct InterruptContext {
     pub rax: u64,
@@ -21,6 +25,25 @@ pub struct InterruptContext {
     pub rflags: u64,
     pub rsp: u64,
     pub ss: u64,
+}
+
+#[repr(C, packed)]
+#[derive(Default)]
+pub struct Tss {
+    reserved0: u32,
+    rsp0: u64,
+    rsp1: u64,
+    rsp2: u64,
+    reserved2: u64,
+    ist1: u64,
+    ist2: u64,
+    ist3: u64,
+    ist4: u64,
+    ist5: u64,
+    ist6: u64,
+    ist7: u64,
+    reserved3: u64,
+    iobm: u32,
 }
 
 #[derive(Default)]
@@ -81,7 +104,30 @@ impl Cpuid {
 }
 
 pub fn start() {
-    let mut cr4: u64 = 0;
+    init_features();
+
+    let mut tss = Box::new(Tss::default());
+    tss.rsp0 = pmm::get()
+        .calloc(2)
+        .expect("Could not allocate the pages for rsp0")
+        .higher_half()
+        .as_u64();
+
+    // page fault's ist
+    tss.ist1 = pmm::get()
+        .calloc(2)
+        .expect("Could not allocate the pages for rsp0")
+        .higher_half()
+        .as_u64();
+
+    let leaked_tss = Box::leak(tss);
+    unsafe {
+        gdt::load_tss(leaked_tss as *mut Tss as u64);
+    }
+}
+
+pub fn init_features() {
+    let mut cr4: u64;
     unsafe {
         asm!("mov {}, cr4", out(reg) cr4);
     }

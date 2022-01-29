@@ -62,9 +62,16 @@ impl TssEntry {
             reserved: 0,
         }
     }
+
+    fn set_base(&mut self, base: u64) {
+        self.base1 = base as u16;
+        self.base2 = (base >> 16) as u8;
+        self.base3 = (base >> 24) as u8;
+        self.base4 = (base >> 32) as u32;
+    }
 }
 
-static GDT: Gdt = Gdt {
+static mut GDT: Gdt = Gdt {
     null: GdtEntry::new(0, 0),
     kernel_code: GdtEntry::new(0x9A, 0x20),
     kernel_data: GdtEntry::new(0x92, 0),
@@ -97,4 +104,10 @@ pub unsafe fn init() {
         descriptor = in(reg) &GDT_DESCRIPTOR,
         tmp = out(reg) _
     );
+}
+
+pub unsafe fn load_tss(tss_addr: u64) {
+    let tss_selector = 0x28;
+    GDT.tss.set_base(tss_addr);
+    asm!("ltr {:e}", in(reg) tss_selector);
 }

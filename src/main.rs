@@ -66,6 +66,7 @@ extern "C" fn _start(_tags: usize) -> ! {
         serial::print!("pmm done yey\n");
         slab::init();
         vmm::init();
+        cpu::start();
         arch::acpi::init(rsdp_tag);
     }
 
