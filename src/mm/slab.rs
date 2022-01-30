@@ -1,7 +1,5 @@
 /*
     A *very* simple slab allocator
-
-    still needs some testing
 */
 
 use crate::arch::mm::pmm;
@@ -27,23 +25,26 @@ struct Cache<'a> {
 
 impl<'a> Cache<'a> {
     unsafe fn new(name: &str, obj_size: usize) -> *mut Cache {
-        let mut chache_ptr: *mut Cache = pmm::get()
+        let chache_ptr: *mut Cache = pmm::get()
             .calloc(1)
             .expect("Could not allocate pages for the cache")
             .higher_half()
             .as_mut_ptr();
 
-        let cache = &mut *chache_ptr;
-        cache.name = name;
-        cache.object_size = obj_size;
-        cache.pages_per_slab = math::div_ceil(
-            OBJS_PER_SLAB * obj_size + size_of::<Slab>(),
-            pmm::PAGE_SIZE as usize,
-        );
-        cache.slab_count = 0;
-        cache.slabs = null_mut(); // last slab guaranted to be null
-        cache.slabs = Slab::new(cache);
-        cache.next = null_mut();
+        let mut cache = Cache {
+            name,
+            object_size: obj_size,
+            pages_per_slab: math::div_ceil(
+                OBJS_PER_SLAB * obj_size + size_of::<Slab>(),
+                pmm::PAGE_SIZE as usize,
+            ),
+            slab_count: 0,
+            slabs: null_mut(),
+            next: null_mut(),
+        };
+        cache.slabs = Slab::new(&mut cache);
+
+        chache_ptr.write(cache);
 
         chache_ptr
     }
@@ -103,24 +104,29 @@ struct Slab {
 
 impl Slab {
     unsafe fn new(parent: &mut Cache) -> *mut Slab {
-        let mut slab_ptr: *mut Slab = pmm::get()
+        serial::print!("hi\n");
+        let slab_ptr: *mut Slab = pmm::get()
             .calloc(parent.pages_per_slab)
             .expect("Could not allocate pages for the new slab")
             .higher_half()
             .as_mut_ptr();
 
-        let slab = &mut *slab_ptr;
+        let slab = Slab {
+            free_objs: OBJS_PER_SLAB,
+            object_size: parent.object_size,
+            bitmap: spin::Mutex::new(bitmap::Bitmap::new(pmm::PAGE_SIZE as usize)),
+            next: parent.slabs,
+            previous: null_mut(),
+            // this should be ok... right?
+            data: slab_ptr.offset(1) as *mut u8,
+        };
 
-        slab.free_objs = OBJS_PER_SLAB;
-        slab.object_size = parent.object_size;
-        slab.bitmap = spin::Mutex::new(bitmap::Bitmap::new(pmm::PAGE_SIZE as usize));
-        slab.next = parent.slabs;
-        slab.previous = null_mut();
-        parent.slabs = slab;
+        slab_ptr.write(slab);
+
+        parent.slabs = slab_ptr;
         parent.slab_count += 1;
-        // this should be ok... right?
-        slab.data = slab_ptr.offset(1) as *mut u8;
 
+        serial::print!("nah, now\n");
         slab_ptr
     }
 
