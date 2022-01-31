@@ -1,3 +1,4 @@
+use crate::serial;
 use crate::utils::{bitmap, math::div_ceil};
 use core::ops::{Deref, DerefMut};
 use core::ptr::null_mut;
@@ -115,7 +116,7 @@ impl Pmm {
                     for p in page..page + pages {
                         bitmap.clear(p);
                     }
-
+                    serial::print!("address: {:#x}\n", page as u64 * PAGE_SIZE);
                     return Some(PhysAddr::new(page as u64 * PAGE_SIZE));
                 }
 

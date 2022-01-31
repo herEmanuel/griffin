@@ -219,7 +219,6 @@ impl PortRegisters {
         }
 
         serial::print!("bytes read: {}\n", cmd_header.prdbc.get());
-        serial::print!("AHCI access completed\n");
         Ok(cmd_header.prdbc.get() as usize)
     }
 }

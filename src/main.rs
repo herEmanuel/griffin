@@ -54,23 +54,26 @@ extern "C" fn _start(_tags: usize) -> ! {
 
     video.print("Hello, world, from Rust!\n");
     video.print("Is everything fine?");
-    serial::print!("fuck off\n");
+
     unsafe {
         arch::gdt::init();
         arch::interrupts::init();
-        serial::print!("crap\n");
         arch::mm::pmm::init(
             &mmap_tag.entry_array as *const StivaleMemoryMapEntry,
             mmap_tag.entries_len,
         );
         serial::print!("pmm done yey\n");
         slab::init();
+        serial::print!("stfu\n");
         vmm::init();
-        cpu::start();
+        serial::print!("vmm uhum\n");
+        // cpu::start();
+        serial::print!("cpu wu\n");
         arch::acpi::init(rsdp_tag);
     }
 
     drivers::hpet::init();
+    serial::print!("fuuuuuuuuuuuck\n");
     arch::apic::init();
     // arch::apic::get().calibrate_timer(1000);
 
@@ -78,25 +81,40 @@ extern "C" fn _start(_tags: usize) -> ! {
 
     arch::pci::enumerate_devices();
     partitions::scan();
-    vfs::mount(unsafe { fs::ext2::get() }, "/");
+    vfs::mount(fs::ext2::get(), "/");
     let mut fd = vfs::open("/home/limine.cfg", vfs::Flags::empty(), vfs::Mode::empty()).unwrap();
     serial::print!("file index: {}\n", fd.file_index);
 
-    let mut content = alloc::vec::Vec::with_capacity(50);
-    vfs::read(fd.fs, fd.file_index, content.as_mut_ptr(), 50, fd.offset);
+    // let mut content = alloc::vec::Vec::with_capacity(50);
+    // vfs::read(fd.fs, fd.file_index, content.as_mut_ptr(), 50, fd.offset);
+    // unsafe {
+    //     content.set_len(50);
+    // }
+    // serial::print!(
+    //     "res: {}\n",
+    //     core::str::from_utf8(content.as_slice()).unwrap()
+    // );
+    // TODO: everything is fucked, theres no hope at this point
+    serial::print!("=== aaaa\n");
+    proc::scheduler::init();
+    serial::print!("=== bbbb\n");
     unsafe {
-        content.set_len(50);
+        asm!("int 0x3");
     }
-    serial::print!(
-        "res: {}\n",
-        core::str::from_utf8(content.as_slice()).unwrap()
-    );
+    // proc::process::Process::new(alloc::string::String::from("crap"), 0, fd);
+    serial::print!("=== cccc\n");
 
     cpu::halt();
 }
 
 #[panic_handler]
-fn panic_handler(_info: &PanicInfo) -> ! {
-    serial::print!("PANIC: {}\n", _info.message().unwrap());
+fn panic_handler(info: &PanicInfo) -> ! {
+    let location = info.location().unwrap();
+    serial::print!(
+        "PANIC at file {}, line {}: {}\n",
+        location.file(),
+        location.line(),
+        info.message().unwrap()
+    );
     cpu::halt();
 }

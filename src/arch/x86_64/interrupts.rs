@@ -1,3 +1,4 @@
+use super::cpu;
 use crate::serial;
 
 #[repr(C, packed)]
@@ -183,11 +184,10 @@ pub fn disable() {
 
 isr!(int3, |_stack| {
     serial::print!("Breakpoint yeeee\n");
+    cpu::halt();
 });
 
 isr!(invalid_opcode, |_stack| {
     serial::print!("INVALID OPCODE\n");
-    loop {
-        asm!("hlt");
-    }
+    cpu::halt();
 });

@@ -109,5 +109,5 @@ pub unsafe fn init() {
 pub unsafe fn load_tss(tss_addr: u64) {
     let tss_selector = 0x28;
     GDT.tss.set_base(tss_addr);
-    asm!("ltr {:e}", in(reg) tss_selector);
+    asm!("ltr {:x}", in(reg) tss_selector);
 }

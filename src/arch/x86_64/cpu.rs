@@ -46,12 +46,12 @@ pub struct Tss {
     iobm: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Cpuid {
-    rax: u64,
-    rbx: u64,
-    rcx: u64,
-    rdx: u64,
+    pub eax: u32,
+    pub ebx: u32,
+    pub ecx: u32,
+    pub edx: u32,
 }
 
 impl Cpuid {
@@ -59,8 +59,8 @@ impl Cpuid {
         let mut res = Cpuid::default();
 
         unsafe {
-            asm!("cpuid", "mov rdi, rbx", in("eax") eax, in("ecx") ecx, 
-                    lateout("rax") res.rax, lateout("rdi") res.rbx, lateout("rcx") res.rcx, lateout("rdx") res.rdx)
+            asm!("cpuid", "mov edi, ebx", in("eax") eax, in("ecx") ecx, 
+                    lateout("eax") res.eax, lateout("edi") res.ebx, lateout("ecx") res.ecx, lateout("edx") res.edx);
         }
 
         res
@@ -68,7 +68,7 @@ impl Cpuid {
 
     pub fn has_smap() -> bool {
         let res = Cpuid::raw(7, 0);
-        if res.rbx & 1 << 20 != 0 {
+        if res.ebx & 1 << 20 != 0 {
             true
         } else {
             false
@@ -77,7 +77,7 @@ impl Cpuid {
 
     pub fn has_smep() -> bool {
         let res = Cpuid::raw(7, 0);
-        if res.rbx & 1 << 7 != 0 {
+        if res.ebx & 1 << 7 != 0 {
             true
         } else {
             false
@@ -86,7 +86,7 @@ impl Cpuid {
 
     pub fn has_fsgsbase() -> bool {
         let res = Cpuid::raw(7, 0);
-        if res.rbx & 1 != 0 {
+        if res.ebx & 1 != 0 {
             true
         } else {
             false
@@ -95,12 +95,19 @@ impl Cpuid {
 
     pub fn has_umip() -> bool {
         let res = Cpuid::raw(7, 0);
-        if res.rcx & 1 << 2 != 0 {
+        if res.ecx & 1 << 2 != 0 {
             true
         } else {
             false
         }
     }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum Ists {
+    PageFault = 0x1,
+    Nmi = 0x2,
 }
 
 pub fn start() {
@@ -115,6 +122,13 @@ pub fn start() {
 
     // page fault's ist
     tss.ist1 = pmm::get()
+        .calloc(2)
+        .expect("Could not allocate the pages for rsp0")
+        .higher_half()
+        .as_u64();
+
+    // NMI's ist
+    tss.ist2 = pmm::get()
         .calloc(2)
         .expect("Could not allocate the pages for rsp0")
         .higher_half()

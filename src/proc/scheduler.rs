@@ -1,9 +1,9 @@
-use super::process::{Process, Thread};
+use super::process::{self, Process, Thread};
 use crate::arch::{apic, cpu, interrupts};
 use crate::fs::vfs;
 use crate::serial;
 use alloc::collections::VecDeque;
-use alloc::rc::Rc;
+use alloc::{rc::Rc, string::String};
 use core::cell::RefCell;
 
 static mut SCHEDULER: Option<Scheduler> = None;
@@ -13,12 +13,28 @@ pub struct SchedulerQueues {
     pub waiting: VecDeque<Rc<RefCell<Thread>>>,
 }
 
+impl SchedulerQueues {
+    pub fn new() -> Self {
+        SchedulerQueues {
+            runnable: VecDeque::new(),
+            waiting: VecDeque::new(),
+        }
+    }
+}
+
 pub struct Scheduler {
     pub queues: SchedulerQueues,
     pub running_thread: Option<Rc<RefCell<Thread>>>,
 }
 
-impl Scheduler {}
+impl Scheduler {
+    pub fn new() -> Self {
+        Scheduler {
+            queues: SchedulerQueues::new(),
+            running_thread: None,
+        }
+    }
+}
 
 interrupts::isr!(reschedule, |regs| {
     let scheduler = get();
@@ -49,12 +65,26 @@ interrupts::isr!(reschedule, |regs| {
 });
 
 pub fn init() {
-    let vector =
-        interrupts::alloc_vector().expect("Could not allocate an interrupt vector for the scheduler");
+    serial::print!("at scheduler init\n");
+    unsafe {
+        process::init_bitmaps();
+        SCHEDULER = Some(Scheduler::new());
+        Process::alloc_pid().unwrap();
+        // serial::print!("opening the file\n");
+        // let fd = vfs::open("/home/limine.cfg", vfs::Flags::empty(), vfs::Mode::empty()).unwrap();
+        // serial::print!("done\n");
+        // let new_proc = Process::new(String::from("init"), 0, fd);
+        // serial::print!("here?\n");
+        // SCHEDULER.as_mut().unwrap().running_thread = Some(new_proc.borrow().threads[0].clone());
+        // serial::print!("gg\n");
+    }
+
+    let vector = interrupts::alloc_vector()
+        .expect("Could not allocate an interrupt vector for the scheduler");
     unsafe {
         interrupts::register_isr(vector, reschedule as u64, 0, 0x8e);
     }
-    apic::get().calibrate_timer(30, vector);
+    // apic::get().calibrate_timer(30, vector);
 }
 
 pub fn get() -> &'static mut Scheduler {

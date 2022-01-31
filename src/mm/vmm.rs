@@ -186,7 +186,7 @@ impl VirtMemoryRange {
 }
 
 pub struct VirtualMemManager {
-    pagemap: PhysAddr,
+    pub pagemap: PhysAddr,
     ranges: Vec<VirtMemoryRange>,
 }
 
@@ -360,7 +360,7 @@ pub fn init() {
         kernel_vmm.pagemap = PhysAddr::new(pml4);
 
         VIRTUAL_MEMORY_MANAGER = Some(kernel_vmm);
-        interrupts::register_isr(0xe, page_fault as u64, 0, 0x8e);
+        interrupts::register_isr(0xe, page_fault as u64, cpu::Ists::PageFault as u8, 0x8e);
     }
 }
 
@@ -375,6 +375,7 @@ pub fn get() -> &'static mut VirtualMemManager {
 // NOTE: SMAP is enabled, so all of this wont work rn
 // TODO: handle MAP_SHARED
 interrupts::isr_err!(page_fault, |_stack, error_code| {
+    serial::print!("Page fault handler\n");
     let mut cr2: u64;
     asm!("mov {}, cr2", out(reg) cr2);
 
@@ -392,6 +393,7 @@ interrupts::isr_err!(page_fault, |_stack, error_code| {
     let mapping = vmm.get_mapping(virt_cr2);
 
     if mapping.is_mmaped() {
+        serial::print!("is mmaped\n");
         // demand paging
         interrupts::enable();
 
@@ -400,16 +402,18 @@ interrupts::isr_err!(page_fault, |_stack, error_code| {
             .expect("Page is marked as mmaped but doesn't belong to any range");
 
         if range.is_anon_map() {
+            serial::print!("anon map\n");
             let page = pmm::get()
                 .calloc(1)
                 .expect("Could not allocate new page for anonymous map");
-
+            serial::print!("allocated page: {:#x}\n", page.as_u64());
             vmm.map_page(
                 virt_cr2,
                 page,
                 PageFlags::from(range.prot) | PageFlags::PRESENT,
                 true,
             );
+            serial::print!("continue");
             return;
         }
 

@@ -141,7 +141,10 @@ impl Slab {
             if !bitmap.is_set(i) {
                 bitmap.set(i);
                 self.free_objs -= 1;
-
+                serial::print!(
+                    "=== slab address:  {:#x}\n",
+                    self.data.offset((i * self.object_size) as isize) as u64
+                );
                 return self.data.offset((i * self.object_size) as isize);
             }
         }
@@ -218,6 +221,7 @@ pub unsafe fn init() {
 unsafe impl<'a> GlobalAlloc for SlabAllocator<'a> {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         if let Some(cache) = SLAB_ALLOCATOR.cache_for(layout.size()) {
+            serial::print!("alignment: {}\n", layout.align());
             (*cache).alloc_obj()
         } else {
             panic!("Could not find a cache large enough to suffice the heap allocation");
