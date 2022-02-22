@@ -224,6 +224,7 @@ unsafe impl<'a> GlobalAlloc for SlabAllocator<'a> {
             serial::print!("alignment: {}\n", layout.align());
             (*cache).alloc_obj()
         } else {
+            serial::print!("size: {}\n", layout.size());
             panic!("Could not find a cache large enough to suffice the heap allocation");
         }
     }

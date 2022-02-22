@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(asm)]
 #![feature(naked_functions)]
 #![feature(asm_sym)]
 #![feature(default_alloc_error_handler)]
@@ -9,25 +8,31 @@
 
 extern crate alloc;
 
-use arch::cpu;
-use core::panic::PanicInfo;
-use fs::{partitions, vfs};
-use mm::{slab, vmm};
-use stivale_boot::v2::{
-    StivaleFramebufferHeaderTag, StivaleHeader, StivaleMemoryMapEntry, StivaleStruct,
-};
-
 pub mod arch;
 pub mod drivers;
 pub mod fs;
 pub mod mm;
 pub mod proc;
 pub mod serial;
-pub mod spinlock;
 pub mod utils;
 pub mod video;
 
-static STACK: [u8; 8192] = [0; 8192];
+use arch::cpu;
+use core::{panic::PanicInfo, mem::align_of};
+use core::arch::asm;
+use fs::{partitions, vfs};
+use mm::{slab, vmm};
+use stivale_boot::v2::{
+    StivaleFramebufferHeaderTag, StivaleHeader, StivaleMemoryMapEntry, StivaleStruct,
+};
+
+#[repr(align(16))]
+struct AlignedArray<T>(T);
+
+// we do not want to overflow this shit again...
+const STACK_SIZE: usize = 0x1000 * 16;
+
+static STACK: AlignedArray<[u8; STACK_SIZE]> = AlignedArray([0; STACK_SIZE]);
 static FRAMEBUFFER_HEADER_TAG: StivaleFramebufferHeaderTag = StivaleFramebufferHeaderTag::new();
 
 #[link_section = ".stivale2hdr"]
@@ -35,49 +40,37 @@ static FRAMEBUFFER_HEADER_TAG: StivaleFramebufferHeaderTag = StivaleFramebufferH
 #[used]
 static STIVALE_HEADER: StivaleHeader = StivaleHeader::new()
     .flags(30)
-    .stack(&STACK[8191] as *const u8)
+    .stack(&STACK.0[STACK_SIZE - 1] as *const u8)
     .tags((&FRAMEBUFFER_HEADER_TAG as *const StivaleFramebufferHeaderTag) as *const ());
 
 #[no_mangle]
-extern "C" fn _start(_tags: usize) -> ! {
-    let tags;
-    unsafe { tags = &*(_tags as *const StivaleStruct) }
-
-    serial::SerialWriter::init();
-
+unsafe extern "C" fn _start(tags: &'static StivaleStruct) -> ! {
     let framebuffer_tag = tags.framebuffer().unwrap();
     let mmap_tag = tags.memory_map().unwrap();
     let rsdp_tag = tags.rsdp().unwrap();
-    serial::print!("rsdp at: {:#x}\n", rsdp_tag.rsdp);
+
+    serial::SerialWriter::init();
 
     let mut video = video::Video::new(framebuffer_tag);
 
     video.print("Hello, world, from Rust!\n");
     video.print("Is everything fine?");
 
-    unsafe {
-        arch::gdt::init();
-        arch::interrupts::init();
-        arch::mm::pmm::init(
-            &mmap_tag.entry_array as *const StivaleMemoryMapEntry,
-            mmap_tag.entries_len,
-        );
-        serial::print!("pmm done yey\n");
-        slab::init();
-        serial::print!("stfu\n");
-        vmm::init();
-        serial::print!("vmm uhum\n");
-        // cpu::start();
-        serial::print!("cpu wu\n");
-        arch::acpi::init(rsdp_tag);
-    }
-
+    arch::mm::pmm::init(
+        &mmap_tag.entry_array as *const StivaleMemoryMapEntry,
+        mmap_tag.entries_len,
+    );
+    slab::init();
+    arch::gdt::init();
+    arch::interrupts::init();
+    vmm::init();
+    cpu::start();
+    arch::acpi::init(rsdp_tag);
+    
     drivers::hpet::init();
-    serial::print!("fuuuuuuuuuuuck\n");
+   
     arch::apic::init();
     // arch::apic::get().calibrate_timer(1000);
-
-    serial::print!("slab allocator running\n");
 
     arch::pci::enumerate_devices();
     partitions::scan();
@@ -85,25 +78,17 @@ extern "C" fn _start(_tags: usize) -> ! {
     let mut fd = vfs::open("/home/limine.cfg", vfs::Flags::empty(), vfs::Mode::empty()).unwrap();
     serial::print!("file index: {}\n", fd.file_index);
 
-    // let mut content = alloc::vec::Vec::with_capacity(50);
-    // vfs::read(fd.fs, fd.file_index, content.as_mut_ptr(), 50, fd.offset);
-    // unsafe {
-    //     content.set_len(50);
-    // }
-    // serial::print!(
-    //     "res: {}\n",
-    //     core::str::from_utf8(content.as_slice()).unwrap()
-    // );
-    // TODO: everything is fucked, theres no hope at this point
-    serial::print!("=== aaaa\n");
-    proc::scheduler::init();
-    serial::print!("=== bbbb\n");
-    unsafe {
-        asm!("int 0x3");
-    }
-    // proc::process::Process::new(alloc::string::String::from("crap"), 0, fd);
-    serial::print!("=== cccc\n");
-
+    let mut content = alloc::vec::Vec::with_capacity(50);
+    vfs::read(fd.fs, fd.file_index, content.as_mut_ptr(), 50, fd.offset);
+    content.set_len(50);
+    serial::print!(
+        "res: {}\n",
+        core::str::from_utf8(content.as_slice()).unwrap()
+    );
+    
+    proc::process::init_bitmaps(); 
+    proc::process::Process::new(alloc::string::String::from("crap"), 0, None);
+    serial::print!("hey!\n");
     cpu::halt();
 }
 

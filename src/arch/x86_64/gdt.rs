@@ -1,3 +1,5 @@
+use core::arch::asm;
+
 #[repr(C, packed)]
 struct GdtDescriptor {
     limit: u16,

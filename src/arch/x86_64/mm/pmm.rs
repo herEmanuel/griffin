@@ -53,6 +53,7 @@ pub struct PmmBox<T> {
 
 impl<T> PmmBox<T> {
     pub fn new(size: usize) -> Self {
+        serial::print!("creating PmmBox\n");
         let alloc_size = div_ceil(size, PAGE_SIZE as usize);
         let mem: *mut T = get()
             .calloc(alloc_size)
@@ -91,6 +92,7 @@ impl<T> DerefMut for PmmBox<T> {
 
 impl<T> Drop for PmmBox<T> {
     fn drop(&mut self) {
+        serial::print!("dropping PmmBox\n");
         get().free(self.data as *mut u8, self.page_cnt);
     }
 }
@@ -179,12 +181,8 @@ pub unsafe fn init(entries: *const StivaleMemoryMapEntry, entries_num: u64) {
     for i in 0..entries_num {
         let entry = &mut *(entries.offset(i as isize) as *mut StivaleMemoryMapEntry);
 
-        match entry.entry_type {
-            StivaleMemoryMapEntryType::BootloaderReclaimable
-            | StivaleMemoryMapEntryType::Usable => {}
-            _ => {
-                continue;
-            }
+        if !matches!(entry.entry_type, StivaleMemoryMapEntryType::Usable) {
+            continue;
         }
 
         if entry.length < bitmap_size {
@@ -208,12 +206,8 @@ pub unsafe fn init(entries: *const StivaleMemoryMapEntry, entries_num: u64) {
     for i in 0..entries_num {
         let entry = &*(entries.offset(i as isize));
 
-        match entry.entry_type {
-            StivaleMemoryMapEntryType::BootloaderReclaimable
-            | StivaleMemoryMapEntryType::Usable => {}
-            _ => {
-                continue;
-            }
+        if !matches!(entry.entry_type, StivaleMemoryMapEntryType::Usable) {
+            continue;
         }
 
         let page = entry.base / PAGE_SIZE;

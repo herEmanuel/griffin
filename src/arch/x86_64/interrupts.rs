@@ -1,5 +1,6 @@
 use super::cpu;
 use crate::serial;
+use core::arch::asm;
 
 #[repr(C, packed)]
 struct IdtDescriptor {
@@ -41,7 +42,7 @@ macro_rules! isr {
                 $code
             }
 
-            asm!(
+            core::arch::asm!(
                 "push r15",
                 "push r14",
                 "push r13",
@@ -93,7 +94,7 @@ macro_rules! isr_err {
                 $code
             }
 
-            asm!(
+            core::arch::asm!(
                 "xchg [rsp], r15", // put the error code in r15 and r15 right after the rip
                 "push r14",
                 "push r13",

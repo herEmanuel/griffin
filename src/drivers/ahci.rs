@@ -286,11 +286,11 @@ pub fn init(hba: &pci::PciDevice) {
 
     hba_mem.ghc.set(hba_mem.ghc.get() | 2); // enable interrupts
 
-    let vector = interrupts::alloc_vector().expect("[AHCI] Could not allocate an interrupt vector");
-    unsafe {
-        interrupts::register_isr(vector, ahci_isr as u64, 0, 0x8e);
-    }
-    hba.set_msi(vector);
+    // let vector = interrupts::alloc_vector().expect("[AHCI] Could not allocate an interrupt vector");
+    // unsafe {
+    //     interrupts::register_isr(vector, ahci_isr as u64, 0, 0x8e);
+    // }
+    // hba.set_msi(vector);
 
     for (i, port) in hba_mem.ports.iter_mut().enumerate() {
         if hba_mem.port_implemented.get() & (1 << i) != 0 {

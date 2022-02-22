@@ -5,6 +5,7 @@ use crate::arch::{cpu, interrupts};
 use crate::proc::scheduler;
 use crate::utils::math::div_ceil;
 use crate::{serial, vfs};
+use core::arch::asm;
 use alloc::vec::Vec;
 
 static mut VIRTUAL_MEMORY_MANAGER: Option<VirtualMemManager> = None;
@@ -360,7 +361,7 @@ pub fn init() {
         kernel_vmm.pagemap = PhysAddr::new(pml4);
 
         VIRTUAL_MEMORY_MANAGER = Some(kernel_vmm);
-        interrupts::register_isr(0xe, page_fault as u64, cpu::Ists::PageFault as u8, 0x8e);
+        // interrupts::register_isr(0xe, page_fault as u64, cpu::Ists::PageFault as u8, 0x8e);
     }
 }
 
@@ -374,94 +375,94 @@ pub fn get() -> &'static mut VirtualMemManager {
 
 // NOTE: SMAP is enabled, so all of this wont work rn
 // TODO: handle MAP_SHARED
-interrupts::isr_err!(page_fault, |_stack, error_code| {
-    serial::print!("Page fault handler\n");
-    let mut cr2: u64;
-    asm!("mov {}, cr2", out(reg) cr2);
+// interrupts::isr_err!(page_fault, |_stack, error_code| {
+//     serial::print!("Page fault handler\n");
+//     let mut cr2: u64;
+//     asm!("mov {}, cr2", out(reg) cr2);
 
-    let virt_cr2 = VirtAddr::new(cr2);
+//     let virt_cr2 = VirtAddr::new(cr2);
 
-    let curr_thread = scheduler::get()
-        .running_thread
-        .as_ref()
-        .expect("Page fault: no running thread")
-        .borrow();
+//     let curr_thread = scheduler::get()
+//         .running_thread
+//         .as_ref()
+//         .expect("Page fault: no running thread")
+//         .borrow();
 
-    let curr_process = curr_thread.parent.borrow();
+//     let curr_process = curr_thread.parent.borrow();
 
-    let vmm = &curr_process.pagemap;
-    let mapping = vmm.get_mapping(virt_cr2);
+//     let vmm = &curr_process.pagemap;
+//     let mapping = vmm.get_mapping(virt_cr2);
 
-    if mapping.is_mmaped() {
-        serial::print!("is mmaped\n");
-        // demand paging
-        interrupts::enable();
+//     if mapping.is_mmaped() {
+//         serial::print!("is mmaped\n");
+//         // demand paging
+//         interrupts::enable();
 
-        let range = vmm
-            .get_range(virt_cr2)
-            .expect("Page is marked as mmaped but doesn't belong to any range");
+//         let range = vmm
+//             .get_range(virt_cr2)
+//             .expect("Page is marked as mmaped but doesn't belong to any range");
 
-        if range.is_anon_map() {
-            serial::print!("anon map\n");
-            let page = pmm::get()
-                .calloc(1)
-                .expect("Could not allocate new page for anonymous map");
-            serial::print!("allocated page: {:#x}\n", page.as_u64());
-            vmm.map_page(
-                virt_cr2,
-                page,
-                PageFlags::from(range.prot) | PageFlags::PRESENT,
-                true,
-            );
-            serial::print!("continue");
-            return;
-        }
+//         if range.is_anon_map() {
+//             serial::print!("anon map\n");
+//             let page = pmm::get()
+//                 .calloc(1)
+//                 .expect("Could not allocate new page for anonymous map");
+//             serial::print!("allocated page: {:#x}\n", page.as_u64());
+//             vmm.map_page(
+//                 virt_cr2,
+//                 page,
+//                 PageFlags::from(range.prot) | PageFlags::PRESENT,
+//                 true,
+//             );
+//             serial::print!("continue");
+//             return;
+//         }
 
-        // TODO: test this
-        if range.is_private_map() {
-            let page = pmm::get()
-                .calloc(1)
-                .expect("Could not allocate new page for private map")
-                .higher_half();
+//         // TODO: test this
+//         if range.is_private_map() {
+//             let page = pmm::get()
+//                 .calloc(1)
+//                 .expect("Could not allocate new page for private map")
+//                 .higher_half();
 
-            let this_page_number = cr2 / pmm::PAGE_SIZE - range.start() / pmm::PAGE_SIZE;
-            // TODO: add range offset to the calculation
-            let offset = this_page_number * pmm::PAGE_SIZE;
-            let cnt = if (this_page_number + 1) * pmm::PAGE_SIZE <= range.length as u64 {
-                pmm::PAGE_SIZE
-            } else {
-                range.length as u64 % pmm::PAGE_SIZE
-            };
+//             let this_page_number = cr2 / pmm::PAGE_SIZE - range.start() / pmm::PAGE_SIZE;
+//             // TODO: add range offset to the calculation
+//             let offset = this_page_number * pmm::PAGE_SIZE;
+//             let cnt = if (this_page_number + 1) * pmm::PAGE_SIZE <= range.length as u64 {
+//                 pmm::PAGE_SIZE
+//             } else {
+//                 range.length as u64 % pmm::PAGE_SIZE
+//             };
 
-            let fd = range
-                .fd
-                .as_ref()
-                .expect("Private mapping not backed by a file");
+//             let fd = range
+//                 .fd
+//                 .as_ref()
+//                 .expect("Private mapping not backed by a file");
 
-            vfs::read(
-                fd.fs,
-                fd.file_index,
-                page.as_mut_ptr::<u8>(),
-                cnt as usize,
-                offset as usize + range.offset,
-            );
+//             vfs::read(
+//                 fd.fs,
+//                 fd.file_index,
+//                 page.as_mut_ptr::<u8>(),
+//                 cnt as usize,
+//                 offset as usize + range.offset,
+//             );
 
-            vmm.map_page(
-                virt_cr2,
-                page.lower_half(),
-                PageFlags::from(range.prot),
-                true,
-            );
-            return;
-        }
+//             vmm.map_page(
+//                 virt_cr2,
+//                 page.lower_half(),
+//                 PageFlags::from(range.prot),
+//                 true,
+//             );
+//             return;
+//         }
 
-        serial::print!("Page fault says: crap\n");
-        return;
-    }
+//         serial::print!("Page fault says: crap\n");
+//         return;
+//     }
 
-    serial::print!("Page fault\n");
-    serial::print!("Error code: {}\n", error_code);
-    serial::print!("CR2: {:#x}\n", cr2);
+//     serial::print!("Page fault\n");
+//     serial::print!("Error code: {}\n", error_code);
+//     serial::print!("CR2: {:#x}\n", cr2);
 
-    cpu::halt();
-});
+//     cpu::halt();
+// });

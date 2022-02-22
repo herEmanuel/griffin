@@ -69,12 +69,12 @@ pub fn init() {
 
     let xapic = Xapic::new();
 
-    vmm::get().map_page(
-        vmm::VirtAddr::new(xapic.address),
-        pmm::PhysAddr::new(xapic.address - pmm::PHYS_BASE),
-        PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::UNCACHEABLE,
-        true,
-    );
+    // vmm::get().map_page(
+    //     vmm::VirtAddr::new(xapic.address),
+    //     pmm::PhysAddr::new(xapic.address - pmm::PHYS_BASE),
+    //     PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::UNCACHEABLE,
+    //     true,
+    // );
 
     xapic.enable();
 

@@ -6,7 +6,7 @@ pub struct Bitmap(&'static mut [u8], pub usize);
 
 impl Bitmap {
     pub fn new(size: usize) -> Self {
-        serial::print!("creating yes\n");
+        serial::print!("creating bitmap\n");
         let data: *mut u8 = pmm::get()
             .calloc(div_ceil(size, pmm::PAGE_SIZE as usize))
             .expect("Could not allocate the pages for the bitmap")
@@ -54,6 +54,7 @@ impl Bitmap {
 
 impl Drop for Bitmap {
     fn drop(&mut self) {
+        serial::print!("dropping bitmap\n");
         pmm::get().free(
             self.0.as_mut_ptr(),
             div_ceil(self.1, pmm::PAGE_SIZE as usize),

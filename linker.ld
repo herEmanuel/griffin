@@ -15,28 +15,26 @@ SECTIONS
 {
     . = 0xffffffff80000000;
 
-    .text : {
+    .text ALIGN(4K) : {
         *(.text*)
     } :text
 
-    . += CONSTANT(MAXPAGESIZE);
-
-    .stivale2hdr : {
+    .stivale2hdr ALIGN(4K) : {
         KEEP(*(.stivale2hdr))
     } :rodata
 
-    .rodata : {
+    .rodata ALIGN(4K) : {
         *(.rodata*)
     } :rodata
 
-    . += CONSTANT(MAXPAGESIZE);
-
-    .data : {
+    .data ALIGN(4K) : {
         *(.data*)
     } :data
 
-    .bss : {
+    .bss ALIGN(4K) : {
         *(COMMON)
         *(.bss*)
     } :data
+
+    /DISCARD/ : { *(.eh_frame_hdr .eh_frame) }
 }

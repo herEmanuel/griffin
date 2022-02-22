@@ -1,4 +1,5 @@
 use crate::arch::{gdt, mm::pmm};
+use core::arch::asm;
 use crate::serial;
 use alloc::boxed::Box;
 
